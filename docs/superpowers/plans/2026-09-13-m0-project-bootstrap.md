@@ -13,7 +13,7 @@
 以下为项目级硬约束，**每个任务都隐式包含**：
 
 - **Java 17**（本机 17.0.16 已装）。**禁止 `javax.*` 包名**，一律 `jakarta.*`。
-- **Spring Boot 3.5.3**（2026-09-13 经 Maven Central 核实）。执行时若已有更新稳定版，需记录到 ADR-0001 后再改。
+- **Spring Boot 3.5.x 线的最新补丁版**（2026-09-13 实测为 **3.5.16**）。**版本一律用 `maven-metadata.xml` 核实，不要用 solr 的 `core=gav` top-N 查询**——后者按发布时间排序而非版本号，会返回过期版本（本计划初版即因此把 3.5.3 误判为最新）。**不采用 4.x 线**（理由见 ADR-0001）。
 - **禁止使用 Docker**（本机 16G/6 核、Win10 Home 无 WSL2）。
 - **所有安装必须落在 D 盘**。C 盘仅剩 ~19G，**严禁**写入。
 - **禁止直接 push `main`**。所有改动走 feature 分支 + PR + Squash merge。
@@ -87,9 +87,14 @@ WingtiskyForum/
 - [ ] **Step 1: 复核 Spring Boot 版本**
 
 ```bash
-curl -s --max-time 20 "https://search.maven.org/solrsearch/select?q=g:%22org.springframework.boot%22+AND+a:%22spring-boot-starter-parent%22&core=gav&rows=8&wt=json" | tr ',' '\n' | grep '"v"' | head -8
+# 权威做法：读 maven-metadata.xml。不要用 solr 的 core=gav top-N 查询——
+# 它按发布时间排序而非版本号，会把旧版本排在最前面。
+curl -s --max-time 25 "https://repo1.maven.org/maven2/org/springframework/boot/spring-boot-starter-parent/maven-metadata.xml" \
+  | grep -oE '<version>3\.5\.[0-9]+</version>' | tail -3
 ```
-Expected: 输出中含 `3.5.3`。若存在更高的 3.x 稳定版，采用它并在 Task 5 的 ADR-0001 中记录版本变更及理由。**不要采用 4.x / 任何 milestone 版本。**
+Expected: 输出 3.5.x 线的最高补丁版本号（2026-09-13 实测为 `3.5.16`）。**采用该版本。**
+
+⚠️ **不要读 `<release>` / `<latest>` 字段**：它们可能指向 milestone 版本（实测该字段返回 `4.2.0-M1`），会把人误导到非稳定版。
 
 - [ ] **Step 2: 写聚合 POM**
 
@@ -221,9 +226,10 @@ Expected: 输出中含 `3.5.3`。若存在更高的 3.x 稳定版，采用它并
 先核实 ArchUnit 最新稳定版，避免版本幻觉：
 
 ```bash
-curl -s --max-time 20 "https://search.maven.org/solrsearch/select?q=g:%22com.tngtech.archunit%22+AND+a:%22archunit-junit5%22&core=gav&rows=5&wt=json" | tr ',' '\n' | grep '"v"' | head -5
+curl -s --max-time 25 "https://repo1.maven.org/maven2/com/tngtech/archunit/archunit-junit5/maven-metadata.xml" \
+  | grep -oE '<version>[0-9]+\.[0-9]+\.[0-9]+</version>' | tail -3
 ```
-Expected: 得到真实版本号；若非 `1.3.0`，更新聚合 POM 中的 `archunit.version`。
+Expected: 得到最新稳定版（2026-09-13 实测为 `1.5.0`）。据此设置聚合 POM 的 `archunit.version`。
 
 9 个子模块的 artifactId 与依赖如下表（**依赖未列入的模块一律不加**）：
 
