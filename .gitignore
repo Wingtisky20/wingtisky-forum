@@ -43,3 +43,7 @@ redis-data/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ---- AI 协作临时产物（任务简报 / 报告 / 评审 diff / 进度账本）----
+# 这些是 agent 工作过程的中间产物，不属于项目交付物，不入库。
+.superpowers/
