@@ -26,6 +26,10 @@
 - **执行记录（spec §8.6）**：M0 结束时在 `docs/04-log/` 产出 `01-M0-项目启动与协作基建.md`，**精炼优先、宁少勿多**（结构：一句话总结 / 产出了什么 / 关键决策与理由 / 你可以怎么验证 / 踩过的坑 / 遗留与风险 / 回滚记录）。**本计划的 `docs/04-log/` 全面取代旧计划的 `04-journal/`（按日期）方案**——两套并存必然打架，违反单一事实源。
 - **提交拆分（spec §10.4.1）**：一个「功能」通常应产生 **3-8 个提交**，不是一个。每个任务末尾给出的提交信息是**该提交**的信息，**不是该任务的唯一提交**；一个任务若含多个可独立回滚的部分（骨架 / 契约 / 领域实现 / 装配 / 测试 / 文档），就拆成多个提交。**但每一刀都必须保持可编译**——spec §10.4 末条：高频 ≠ 提交半成品。
 - **证据制（spec §9 闸门 1）**：任何"已完成"结论必须附**可复现命令 + 真实输出**。禁止"应该可以了"。
+- **两条命令坑（Task 1 实测，后续任务勿照抄原文）**：
+  1. **`mvn -pl <module> -am spring-boot:run` 不可用** —— `-am` 会把无 main class 的根聚合 POM 拽进 reactor。改用 `mvn -pl app -am package -DskipTests` 后 `java -jar app/target/*.jar`。
+  2. **`mvn clean compile` 不产 jar** —— 凡本计划中以 `ls */target/*.jar` 作为"模块非空"证据的地方，**必须先 `package`**，否则文件不存在、验证必然失败。
+- **收尾时不要用 `taskkill //IM java.exe`** —— 会连带杀掉用户开着的 IDEA 等所有 java 进程。一律按端口找 PID 再精确 kill：`netstat -ano | grep ':8080 ' | grep LISTENING` 取 PID，再 `taskkill //PID <pid> //F`。
 - **依赖防幻觉（spec §9 闸门 3）**：新增依赖必须经 Maven Central 核实真实存在，并 `mvn dependency:tree` 解析成功。
 
 ## 本计划的文档书写约定
@@ -786,14 +790,24 @@ EOF
 Run: `mvn -q clean compile`
 Expected: `BUILD SUCCESS`，无 ERROR。**若报 `javax.*` 相关错误说明父 POM 版本不对，回 Step 1。**
 
-Run（后台启动，25 秒后探测健康端点，然后关闭）：
+**⚠️ 命令坑一（Task 1 实测）：`mvn -pl app -am spring-boot:run` 跑不起来。**
+`-am` 会把根聚合 POM 一并拽进 reactor，而它没有 main class，报 `Unable to find a suitable main class`。
+
+**⚠️ 命令坑二：`mvn clean compile` 不产 jar。** 本计划多处用 `ls */target/*.jar` 作为"模块非空"的证据，**那必须先 `package`**，否则文件根本不存在。
+
+Run（打包 → 分离进程启动 → 探测 → 按端口精确关闭）：
 ```bash
-mvn -q -pl app -am spring-boot:run &
+mvn -q -pl app -am package -DskipTests
+java -jar app/target/app-1.0.0-SNAPSHOT.jar &
 sleep 25
 curl -s http://localhost:8080/actuator/health
-kill %1
+
+# ⚠️ 不要用 `taskkill //IM java.exe`——会连带杀掉用户开着的 IDEA 等所有 java 进程。
+#    一律按端口找 PID 再精确 kill：
+PID=$(netstat -ano | grep ':8080 ' | grep LISTENING | awk '{print $5}' | head -1)
+taskkill //PID "$PID" //F
 ```
-Expected: 输出 `{"status":"UP"}`。日志中可见 `Started WingtiskyForumApplication`。
+Expected: 输出 `{"status":"UP"}`；日志中可见 `Started WingtiskyForumApplication`，且日志头显示 `Spring Boot :: (v3.5.16)`。
 
 - [ ] **Step 7: 收尾自查（提交前逐条对照 `git diff`）**
 
