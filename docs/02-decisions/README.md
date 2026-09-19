@@ -81,10 +81,10 @@ ADR 是历史记录，**已经写下的内容不再修改**。状态变了，就
 | 编号 | 标题 | 状态 | 日期 | 文件 |
 |---|---|---|---|---|
 | [ADR-0001](ADR-0001-tech-stack-baseline.md) | 技术栈基线：JDK17 + Boot3 + ES8 + Kafka KRaft | 已接受 | 2026-09-13 | ✅ 已存在；含补丁版更正记录与 Redisson×Redis 5 待办 |
-| ADR-0002 | 架构形态：模块化单体 | **已修订** | 2026-09-13 | ⏳ 待写（M0 Task 5） |
+| [ADR-0002](ADR-0002-modular-monolith.md) | 架构形态：模块化单体 | **已修订** | 2026-09-13 | ✅ 已存在；被 ADR-0010 修订为「多服务 + 先画逻辑边界后做物理拆分」，**模块边界规则全部保留**（正文附模块改名对照表） |
 | [ADR-0003](ADR-0003-frontend-vue3.md) | 前端形态：Vue3 + Element Plus 前后端分离 | 已接受 | 2026-09-13 | ✅ 已存在 |
 | [ADR-0004](ADR-0004-no-docker-locally.md) | 本地不使用 Docker | 已接受 | 2026-09-13 | ✅ 已存在；含"GitHub 用户可用 Docker Compose 复现"的保留条款 |
-| ADR-0005 | 明确不采用微服务 | **已废弃** | 2026-09-13 | ⏳ 待写（M0 Task 5） |
+| [ADR-0005](ADR-0005-no-microservices.md) | 明确不采用微服务 | **已废弃** | 2026-09-13 | ✅ 已存在；由 ADR-0010 取代——其写下的"何时才该拆"判据被秒杀域满足 |
 | [ADR-0006](ADR-0006-delivery-github-public.md) | 交付形态：GitHub 公开 + 本地可复现 | 已接受 | 2026-09-13 | ✅ 已存在 |
 | [ADR-0007](ADR-0007-integration-test-not-in-ci.md) | 集成测试不在 CI 中运行 | 已接受 | 2026-09-13 | ✅ 已存在；评估时点 spec §7.2(M7) 与 §12(M10) 记载不一致，**待定** |
 | [ADR-0008](ADR-0008-github-flow.md) | 分支模型：GitHub Flow + Merge commit（`--no-ff`） | 已接受 | 2026-09-13 | ✅ 已存在；**2026-09-19 由 Squash 修订为 Merge commit**，正文含修订记录 |
