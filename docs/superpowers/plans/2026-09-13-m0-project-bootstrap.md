@@ -110,6 +110,14 @@ WingtiskyForum/
 - Create: `app/src/main/java/com/wingtisky/forum/WingtiskyForumApplication.java`
 - Create: 11 个 `src/main/java/com/wingtisky/forum/<包路径>/package-info.java`（清单见 Step 5）
 
+**Delete（⚠️ 极易遗漏，必读）：**
+
+- Delete: `forum-common/`、`forum-domain/`、`forum-infra/`、`forum-module-user/`、`forum-module-content/`、`forum-module-search/`、`forum-module-notify/`、`forum-module-admin/`、`forum-boot/`
+
+> **为什么必须显式列出这一步**：仓库当前**仍存在提交 `e2619a2` 留下的旧 9 模块骨架**。本任务原描述只写了"新建 12 模块"，只在 Step 7 的期望目录清单里隐晦提了一句"不应有 `forum-module-*`"。**照原描述执行会得到 21 个模块——两套骨架并存，旧的心智模型持续干扰后续所有任务。**
+>
+> **删除时机**：与「重写父 POM」在**同一个提交**内完成（父 POM 的 `<modules>` 一次改为只含 `wt-common`/`wt-domain`/`wt-infra`）。**不要先删后建**——那会让中间态编译不过，违反"每一刀都必须可编译"。旧骨架的完整内容在 git 历史 `e2619a2` 中，**无需额外 tag 或备份分支**。
+
 **Interfaces:**
 - Consumes: 无（起点）
 - Produces: 后续所有任务依赖的模块坐标 `com.wingtisky:wt-common:1.0.0-SNAPSHOT` 等 **12 个**（+ 3 个域聚合 POM）；启动类全限定名 `com.wingtisky.forum.WingtiskyForumApplication`；三个域的包前缀 `com.wingtisky.forum.forum..` / `com.wingtisky.forum.trade..` / `com.wingtisky.forum.seckill..`（Task 7 的 ArchUnit 规则直接引用，**改包名即失效**）
