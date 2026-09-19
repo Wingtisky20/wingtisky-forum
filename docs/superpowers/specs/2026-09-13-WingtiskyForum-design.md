@@ -317,7 +317,7 @@ Caffeine → miss → Redis → miss → Redisson RLock(按 key) → 锁内 doub
 M8 的形态**现在不设计**，只保证当前设计不堵死它：
 
 - 内容域的长文本（帖子正文）可被导出用于向量化
-- 检索域（`forum-module-search`）是独立模块，M8 的语义检索可在此扩展，**不污染 `content`**
+- 检索域（`forum-search`）是独立模块，二期的语义检索（M11）可在此扩展，**不污染 `forum-content`**
 - 分层清晰，引入 AI 能力时不需要重构业务代码
 
 ---
@@ -382,8 +382,8 @@ WingtiskyForum/
 │  │   └─ diagrams/               Mermaid 源文件
 │  └─ superpowers/specs/          本文档所在
 ├─ forum-common/  forum-domain/  forum-infra/
-├─ forum-module-user/  forum-module-content/  forum-module-search/
-├─ forum-module-notify/  forum-module-admin/  forum-boot/
+├─ forum/  trade/  seckill/    三个业务域（各自聚合子模块）
+├─ app/                        单进程启动模块（M9 拆为 forum-app / trade-app / seckill-app + gateway）
 ├─ frontend/                      Vue3 独立工程
 ├─ scripts/                       造数、对账、中间件启停
 └─ tools/                         check-doc-refs / check-deps
@@ -409,7 +409,7 @@ WingtiskyForum/
 **收场**（必须做完五件事）：
 
 1. 更新 `STATUS.md`（进度 + **证据等级** + 下一步 + 阻塞）
-2. 写 `docs/04-journal/YYYY-MM-DD.md`
+2. 写 `docs/04-log/` 下的执行记录（**按功能阶段分文件**，非按日期；见 §8.6）
 3. 有新决策 → 写 ADR
 4. `git commit`（Conventional Commits + 里程碑前缀）
 5. **向用户报告**：本次真实改了什么、验证到什么程度、遗留什么
@@ -661,7 +661,7 @@ Closes: #12
 
 **两条铁律**：
 1. **`main` 上永不 force push**（公开仓库改写历史会破坏所有引用，是真实事故）。force push 只允许用于自己的 feature 分支。
-2. **每次回滚必须留痕**：在 `docs/04-journal/` 写清「为什么回滚、回滚到什么状态、后续怎么办」。
+2. **每次回滚必须留痕**：在 `docs/04-log/` 的当前阶段文档中写清「为什么回滚、回滚到什么状态、后续怎么办」。
 
 > 回滚记录本身就是面试素材——「我做过一次回滚，因为 X，回滚后改成了 Y」比「一路顺利」可信得多。
 
@@ -690,7 +690,7 @@ Closes: #12
 
 ### 10.7 Tag 与 Release
 
-每个里程碑打**注解 tag**：`git tag -a m1-done -m "..."` 并 push。GitHub 上发 Release（notes 从 `docs/04-journal/` 汇总）。
+每个里程碑打**注解 tag**：`git tag -a m1-done -m "..."` 并 push。GitHub 上发 Release（notes 从 `docs/04-log/` 对应阶段的执行记录汇总）。
 
 好处：随时 `git diff m2-done m3-done` 即可看到「亮点 1 到底加了什么」——**面试前复盘靠这个**。
 
