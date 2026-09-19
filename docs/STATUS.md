@@ -53,7 +53,7 @@
 | 6 | 防漂移脚本 tools/ | 未开始 | — |
 | 7 | 架构边界测试 + CI 骨架 | 未开始 | — |
 | 8 | 本地中间件 ES8 + Kafka3.9 | 未开始 | — |
-| 9 | GitHub 仓库创建与推送 | 未开始 | — |
+| 9 | GitHub 仓库创建与推送 | **仓库已建并推送**；分支保护与 CI 待补 | `[REAL]` |
 | 10 | M0 收尾 | 未开始 | — |
 
 > **两点说明**：
@@ -79,9 +79,16 @@
 Spring Boot **3.5.16** · Redisson **3.52.0** · Caffeine **3.2.4** · ArchUnit **1.5.0**
 **不上 4.x 线**——Redisson 4.x 可能要求 Redis 6+，而本机 Redis 为 5.0.14.1。
 
-### 命名
+### 命名与仓库
 
 产品名 **深栈**（技术**栈** + **深**度）· 仓库名 `wingtisky-forum`
+
+**仓库地址**：https://github.com/Wingtisky20/wingtisky-forum（Public）
+- `main` = 设计文档基线（`ad87503`）
+- `feature/m0-bootstrap` = M0 工作分支（当前分支）
+
+**⚠️ git 访问 GitHub 必须走代理**（Clash Verge 混合端口 `127.0.0.1:18569`，已 `--local` 配置）。
+**Clash 未运行时 `git push` 会失败——不是仓库坏了。** 详见 `docs/06-runbook/troubleshooting.md`。
 
 ---
 
