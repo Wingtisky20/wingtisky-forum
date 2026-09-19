@@ -24,6 +24,8 @@
     <module>wt-domain</module>
     <module>wt-infra</module>
     <module>forum</module>
+    <module>trade</module>
+    <module>seckill</module>
   </modules>
 
   <properties>
