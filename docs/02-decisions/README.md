@@ -87,7 +87,7 @@ ADR 是历史记录，**已经写下的内容不再修改**。状态变了，就
 | ADR-0005 | 明确不采用微服务 | **已废弃** | 2026-09-13 | ⏳ 待写（M0 Task 5） |
 | ADR-0006 | 交付形态：GitHub 公开 + 本地可复现 | 已接受 | 2026-09-13 | ⏳ 待写（M0 Task 5） |
 | ADR-0007 | 集成测试不在 CI 中运行 | 已接受 | 2026-09-13 | ⏳ 待写（M0 Task 5） |
-| ADR-0008 | 分支模型：GitHub Flow + Squash merge | 已接受 | 2026-09-13 | ⏳ 待写（M0 Task 5） |
+| ADR-0008 | 分支模型：GitHub Flow + Merge commit（`--no-ff`） | 已接受 | 2026-09-13 | ⏳ 待写（M0 Task 5）｜**2026-09-19 由 Squash 修订为 Merge commit** |
 | [ADR-0009](ADR-0009-business-domain-expansion.md) | 业务域从「纯论坛」扩展为「技术社区 + 付费内容」 | 已接受 | 2026-09-13 | ✅ 已存在 |
 | [ADR-0010](ADR-0010-service-split.md) | 按故障域拆三个服务，且「先画逻辑边界，后做物理拆分」 | 已接受 | 2026-09-13 | ✅ 已存在 |
 | [ADR-0011](ADR-0011-consistency-strategy.md) | 跨服务一致性用「本地消息表 + MQ 最终一致」，不用 Seata | 已接受 | 2026-09-13 | ✅ 已存在 |

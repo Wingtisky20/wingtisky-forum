@@ -18,7 +18,7 @@
 - **Spring Boot 3.5.x 线的最新补丁版**（2026-09-13 实测为 **3.5.16**）。**版本一律用 `maven-metadata.xml` 核实，不要用 solr 的 `core=gav` top-N 查询**——后者按发布时间排序而非版本号，会返回过期版本（本计划初版即因此把 3.5.3 误判为最新）。**不采用 4.x 线**（理由见 ADR-0001）。
 - **禁止使用 Docker**（本机 16G/6 核、Win10 Home 无 WSL2）。
 - **所有安装必须落在 D 盘**。C 盘仅剩 ~19G，**严禁**写入。
-- **禁止直接 push `main`**。所有改动走 feature 分支 + PR + Squash merge。
+- **禁止直接 push `main`**。所有改动走 feature 分支 + PR + **Merge commit（`--no-ff`）**（2026-09-19 由 Squash 修订，见 ADR-0008）。
 - **提交信息必须符合 spec §10.3 严格格式**（\【为什么\】\【改了什么\】\【验证\】\【关联\】）。
 - **敏感信息绝不入库**。密码/密钥走环境变量，提供 `.env.example` 占位模板。
 - **Minimal tooling**：不引入本计划未列出的任何框架、插件或工具。
@@ -1027,7 +1027,7 @@ app/          单进程启动模块（唯一有 main()）—— M0–M8 的唯�
 - `【验证】` 必填——附**命令 + 真实结果**，不接受"应该没问题"
 - scope：业务用 `m<里程碑>-<域>`（如 `m3-cache`）；基建用 `infra`/`build`/`ci`/`docs`
 - **禁止**：`fix bug` / `update` / `优化一下` / 空 body / 主体与 diff 不符
-- **禁止直接 push main**；走 feature 分支 + PR + Squash merge
+- **禁止直接 push main**；走 feature 分支 + PR + Merge commit（`--no-ff`）
 
 **粒度（spec §10.4.1）**：一个「功能」通常应产生 **3–8 个提交**，不是一个。可拆的维度：契约先行 / 领域与装配分离 / 测试独立 / **修复独立**（bug 修复永不混进功能提交）/ 文档独立。
 **高频不等于半成品**——进入 `main` 的每一个提交都必须可编译。
@@ -1199,7 +1199,7 @@ EOF
 ## 5. 目录结构说明（spec §8.1）
 ## 6. 防幻觉六道闸门简述（详表指针 → spec §9）
 ## 7. Git 规范速查（分支模型 / 提交格式 / 提交粒度 / 回滚 / tag）
-## 8. 里程碑工作流（feature 分支 → PR → Squash merge → tag）
+## 8. 里程碑工作流（feature 分支 → PR → Merge commit（`--no-ff`）→ tag）
 ## 9. 敏感信息处理（环境变量 / 误提交三步应急）
 ## 10. 用户参与机制（spec §8.5：任务前置确认三问 / 变更简报 / 设计先于代码 /
 ##     决策不替用户拍板 / 暂停权；并写明"执行技能的默认值在本项目失效"）
@@ -1541,7 +1541,7 @@ EOF
 | [ADR-0005](ADR-0005-no-microservices.md) | 明确不采用微服务 | **已废弃** | 2026-09-13 | 本任务新建；**由 ADR-0010 取代**——业务域扩展后前提改变 |
 | [ADR-0006](ADR-0006-delivery-github-public.md) | 交付形态：GitHub 公开 + 本地可复现 | 已接受 | 2026-09-13 | 本任务新建 |
 | [ADR-0007](ADR-0007-integration-test-not-in-ci.md) | 集成测试不在 CI 中运行 | 已接受 | 2026-09-13 | 本任务新建 |
-| [ADR-0008](ADR-0008-github-flow.md) | 分支模型：GitHub Flow + Squash merge | 已接受 | 2026-09-13 | 本任务新建 |
+| [ADR-0008](ADR-0008-github-flow.md) | 分支模型：GitHub Flow + Merge commit（`--no-ff`） | 已接受 | 2026-09-13 | 本任务新建；**合并方式于 2026-09-19 由 Squash 修订为 Merge commit**，ADR 正文须带修订记录 |
 | [ADR-0009](ADR-0009-business-domain-expansion.md) | 业务域扩展：纯论坛 → 技术社区 + 付费内容 | 已接受 | 2026-09-13 | **已存在，不重写** |
 | [ADR-0010](ADR-0010-service-split.md) | 按故障域拆三个服务 + 先边界后进程 | 已接受 | 2026-09-13 | **已存在，不重写**；修订 ADR-0002、取代 ADR-0005 |
 | [ADR-0011](ADR-0011-consistency-strategy.md) | 跨服务一致性：本地消息表 + MQ 最终一致 | 已接受 | 2026-09-13 | **已存在，不重写**；明确不用 Seata |
@@ -1653,7 +1653,7 @@ docs(adr): 补写 ADR-0001/0003/0004/0006/0007/0008 正文
 - ADR-0003 前端 Vue3 / ADR-0004 不用 Docker（含"GitHub 用户可用
   Docker Compose 复现"的保留）/ ADR-0006 交付形态
 - ADR-0007 集成测试不进 CI（附"如果有 Docker 应该怎么做"）
-- ADR-0008 GitHub Flow + Squash merge
+- ADR-0008 GitHub Flow + Merge commit（`--no-ff`，含 2026-09-19 由 Squash 修订的记录）
 - 每条均含"后果（含负面）"与"被否决方案为何不选"两节
 
 【验证】

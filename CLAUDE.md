@@ -88,7 +88,8 @@ app/                                        唯一启动模块（M9 拆为 forum
 
 ## Git 标准
 
-**分支**：GitHub Flow。`main` 永远可运行，**禁止直接 push**；走 `feature/mX-*` → PR → **Squash merge**。
+**分支**：GitHub Flow。`main` 永远可运行，**禁止直接 push**；走 `feature/mX-*` → PR → **Merge commit（`--no-ff`）**。
+（2026-09-19 修订：原定 Squash，因它会把迭代过程压没，见 ADR-0008。）
 
 **提交信息格式（四节必填）**：
 ```
