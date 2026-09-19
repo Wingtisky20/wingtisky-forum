@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.wingtisky</groupId>
+    <artifactId>wingtisky-forum</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>forum</artifactId>
+  <packaging>pom</packaging>
+  <name>forum</name>
+  <description>内容域聚合：论坛/评论/检索/通知（M9 拆为 forum-app）</description>
+
+  <modules>
+    <module>forum-user</module>
+    <module>forum-content</module>
+    <module>forum-search</module>
+    <module>forum-notify</module>
+  </modules>
+</project>

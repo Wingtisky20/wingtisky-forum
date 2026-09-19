@@ -18,11 +18,12 @@
   <name>wingtisky-forum</name>
   <description>技术社区 + 付费内容（对标 CSDN）—— Java 后端秋招简历项目</description>
 
-  <!-- 逐刀追加：本提交只列三个共享模块 -->
+  <!-- 逐刀追加 -->
   <modules>
     <module>wt-common</module>
     <module>wt-domain</module>
     <module>wt-infra</module>
+    <module>forum</module>
   </modules>
 
   <properties>
