@@ -16,18 +16,13 @@
   <version>1.0.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>wingtisky-forum</name>
-  <description>技术社区（对标掘金/牛客）—— Java 后端秋招简历项目</description>
+  <description>技术社区 + 付费内容（对标 CSDN）—— Java 后端秋招简历项目</description>
 
+  <!-- 逐刀追加：本提交只列三个共享模块 -->
   <modules>
-    <module>forum-common</module>
-    <module>forum-domain</module>
-    <module>forum-infra</module>
-    <module>forum-module-user</module>
-    <module>forum-module-content</module>
-    <module>forum-module-search</module>
-    <module>forum-module-notify</module>
-    <module>forum-module-admin</module>
-    <module>forum-boot</module>
+    <module>wt-common</module>
+    <module>wt-domain</module>
+    <module>wt-infra</module>
   </modules>
 
   <properties>
@@ -41,45 +36,66 @@
 
   <dependencyManagement>
     <dependencies>
-      <!-- 内部模块 -->
+      <!-- 内部模块：三个共享模块 -->
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-common</artifactId>
+        <artifactId>wt-common</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-domain</artifactId>
+        <artifactId>wt-domain</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-infra</artifactId>
+        <artifactId>wt-infra</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- 内部模块：内容域 -->
+      <dependency>
+        <groupId>com.wingtisky</groupId>
+        <artifactId>forum-user</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-module-user</artifactId>
+        <artifactId>forum-content</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-module-content</artifactId>
+        <artifactId>forum-search</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-module-search</artifactId>
+        <artifactId>forum-notify</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- 内部模块：交易域 -->
+      <dependency>
+        <groupId>com.wingtisky</groupId>
+        <artifactId>trade-product</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-module-notify</artifactId>
+        <artifactId>trade-order</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.wingtisky</groupId>
-        <artifactId>forum-module-admin</artifactId>
+        <artifactId>trade-payment</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- 内部模块：秒杀域 -->
+      <dependency>
+        <groupId>com.wingtisky</groupId>
+        <artifactId>seckill-coupon</artifactId>
         <version>${project.version}</version>
       </dependency>
 
