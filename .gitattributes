@@ -1,0 +1,26 @@
+# 统一换行符：仓库内一律 LF，Windows 工作区检出为 CRLF
+# 不设此项时，Windows 开发 + GitHub 协作会造成"整文件变更"的假 diff，
+# 把真实改动淹没。
+* text=auto
+
+# 显式声明，让 diff 更有意义
+*.java   text diff=java
+*.xml    text diff=xml
+*.md     text
+*.yml    text
+*.yaml   text
+*.properties text
+
+# 脚本：强制换行符（bash 脚本若带 CRLF 会在执行时报奇怪的错）
+*.sh     text eol=lf
+*.bat    text eol=crlf
+
+# 二进制：不做换行符转换
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.jar    binary
+*.zip    binary
