@@ -26,6 +26,7 @@
     <module>forum</module>
     <module>trade</module>
     <module>seckill</module>
+    <module>app</module>
   </modules>
 
   <properties>
