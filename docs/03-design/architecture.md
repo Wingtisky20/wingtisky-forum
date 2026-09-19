@@ -79,33 +79,53 @@ flowchart LR
 
 ## 3. 模块清单
 
+> ⚠️ **关键区分**：模块清单有两态。**M0 建立的是「逻辑态」**——一个进程，但模块边界已经按三个服务划好；**M9 才转为「物理态」**（三个独立启动模块 + 网关）。
+>
+> 这正是 §2.4「先画逻辑边界，后做物理拆分」的落地方式。
+
+### 3.1 逻辑态（M0 起，M1–M8 全程）
+
 ```
 wingtisky-forum/                       父 POM（聚合）
+├─ pom.xml
 ├─ wt-common/           统一响应体 / 错误码 / 异常体系 / 工具 / 注解
-├─ wt-domain/           领域模型 + 跨服务与跨模块接口契约（只放契约）
+├─ wt-domain/           领域模型 + 跨域接口契约（只放契约）
 ├─ wt-infra/            中间件基础设施（机制，不含业务策略）
 │
-├─ forum-service/       内容域（自身为 Maven 聚合模块）
+├─ forum/               内容域（Maven 聚合模块）
 │  ├─ forum-user/           用户、认证、JWT、RBAC
 │  ├─ forum-content/        帖子、评论、标签、专栏
 │  ├─ forum-search/         ES 索引、同步、检索
-│  ├─ forum-notify/         通知
-│  └─ forum-app/            启动模块（唯一 main）
+│  └─ forum-notify/         通知
 │
-├─ trade-service/       交易域
+├─ trade/               交易域（Maven 聚合模块）
 │  ├─ trade-product/        商品（付费专栏/课程）
 │  ├─ trade-order/          订单、状态机
-│  ├─ trade-payment/        模拟支付、内容解锁凭证
-│  └─ trade-app/            启动模块
+│  └─ trade-payment/        模拟支付、内容解锁凭证
 │
-├─ seckill-service/     秒杀
-│  ├─ seckill-coupon/       券、库存、Lua 扣减、防刷
-│  └─ seckill-app/          启动模块
+├─ seckill/             秒杀域（Maven 聚合模块）
+│  └─ seckill-coupon/       券、库存、Lua 扣减、防刷
 │
-├─ gateway/             API 网关
+├─ app/                 **单进程启动模块**（唯一 main）
 ├─ frontend/            Vue3 独立工程
-├─ scripts/  tools/  docs/
+└─ scripts/  tools/  docs/
 ```
+
+**域间边界由 ArchUnit 强制**：`trade/**` 不得依赖 `forum/**` 与 `seckill/**` 的 internal 包，反之亦然；三者只能通过 `wt-domain` 的接口通信。
+
+> **命名分层说明（避免混淆）**：本文中 `forum-service` / `trade-service` / `seckill-service` 指**可部署的服务**（M9 起才真实存在）；M0 起建立的是它们的**代码模块**——聚合目录 `forum/`、`trade/`、`seckill/`；M9 物理拆分时新增的**启动模块**名为 `forum-app` / `trade-app` / `seckill-app`。
+> **三者是同一事物的不同层次，不是三个不同的东西。**
+
+### 3.2 物理态（M9 起）
+
+```
+├─ forum-app/           内容域独立启动模块
+├─ trade-app/           交易域独立启动模块
+├─ seckill-app/         秒杀独立启动模块
+├─ gateway/             API 网关
+```
+
+`app/` 模块此时拆解为上述三个；**业务模块本身一行不改**——这正是"先画边界"换来的收益。
 
 **边界线仍是「机制 vs 策略」**（见 spec §4.3）：`wt-infra` 只管连接、序列化、Key 规范、重试；缓存存多久、哪些事件幂等、索引怎么映射，都属业务模块。
 
