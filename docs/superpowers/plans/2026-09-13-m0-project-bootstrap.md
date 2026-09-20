@@ -1842,15 +1842,28 @@ chmod +x tools/*.sh
 bash tools/check-deps.sh; echo "check-deps 退出码: $?"
 bash tools/check-doc-refs.sh; echo "check-doc-refs 退出码: $?"
 ```
-Expected:
+Expected（**⚠️ 本节原写的预期经实测不成立，2026-09-19 已更正**）:
 - `check-deps` → `[check-deps] 通过。` 退出码 `0`
-- `check-doc-refs` → 应报告 `CLAUDE.md` 中引用的 `ArchitectureTest` 尚不存在（**这是预期的正确行为**——Task 7 才创建该类，属"文档先行、代码未到"）。进入 Step 5 处理；**若报其他项，逐条核实文档是否真的写错了引用**（很可能是 Task 1–5 遗留的旧模块名）。
+- `check-doc-refs` → **实测输出「活文档中暂无可检查的代码引用」，退出码 `0`**。
 
-- [ ] **Step 5: 处理 Step 4 发现的漂移**
+  **原文写的是"应报告 CLAUDE.md 中引用的 `ArchitectureTest` 尚不存在"——归因错了**：`ArchitectureTest` 只出现在**本计划书自己**里（`plans/…m0-project-bootstrap.md:1019`），`CLAUDE.md` 中并无该引用（Task 3 落地时写的是"边界由 ArchUnit 强制"，没写类名）。而扫描范围已收紧为"只扫活文档"（排除 `plans/` 与 `specs/`），因此该引用不再被检查。
+  
+  **有效性改用反面对照证明**（不能只看它输出"通过"——一个永远返回 0 的脚本也能"通过"）：
 
-- 若报 `ArchitectureTest` 不存在：**不要删掉引用**——该引用在 CLAUDE.md 中标注了完整路径，是 Task 7 将要创建的东西，**留待 Task 7 补齐**，本任务到此结束。
-- 若报 `forum-module-*` / `forum-boot` / `forum-common` 等**旧模块名**：说明 Task 1–5 某处漏改，回到对应文件改成新模块名后重跑。
-- **若 Step 4 无报错：说明脚本的匹配规则太窄（该报的没报）**，检查 `refs` 提取正则是否被 shell 转义吃掉了——这比"报了假阳性"更危险。
+  ```bash
+  sed -i 's|^## 3. 模块清单|## 3. 模块清单（见 `com.wingtisky.forum.trade.order.FakeOrderService`）|' docs/03-design/architecture.md
+  bash tools/check-doc-refs.sh   # → 退出码 1，指出出处 docs/03-design/architecture.md
+  git checkout -- docs/03-design/architecture.md
+  ```
+
+- [x] **Step 5: 处理 Step 4 发现的漂移**（2026-09-19 执行完毕）
+
+**实际发生的两件事，都写在这里以免下次重蹈：**
+
+1. **脚本首版报出 3 处，其中 2 处是假阳性**：`TempViolation` / `PlaceholderInTradeProduct` 来自本计划书描述的**临时测试夹具**（Task 7 建来验证 ArchUnit 拦得住跨域依赖，验完即 `rm`），永远不该存在于代码里。这直接推翻"扫整个 `docs/`"的设定——**扫描范围已收紧为只扫活文档**，理由写在 `tools/README.md`。
+2. **旧模块名做了人工核对**（脚本不覆盖这一类）：`grep -rn 'forum-module-|forum-boot|forum-common|forum-domain|forum-infra|04-journal'` 扫描活文档 → 仅 `ADR-0002` 命中，且那是它**应该有**的内容（原始正文 + 旧名→新名对照表）。**结论：旧模块名不能做成自动检查**——ADR 的职责就是记录"当初叫什么"，出现旧名字本身不是漂移。此局限已记入 `tools/README.md`。
+
+> **原始提示保留（仍然有效）**：若 `check-doc-refs` 报出旧模块名残留，说明某处漏改，回对应文件改掉重跑；**若它在活文档明明有代码引用时仍无报错**，说明匹配正则太窄（该报的没报）——这比假阳性更危险。
 
 - [ ] **Step 6: 提交**
 
@@ -1877,8 +1890,9 @@ spec §9 闸门 3 与闸门 6 此前只有原则没有手段：依赖幻觉（�
 
 【验证】
 - `bash tools/check-deps.sh` → [check-deps] 通过，退出码 0
-- `bash tools/check-doc-refs.sh` → 仅报 CLAUDE.md 引用的 ArchitectureTest
-  尚不存在（Task 7 才创建，属预期的文档先行）
+- 反面对照：向 wt-common/pom.xml 注入散落版本号 → 退出码 1 并指名位置
+- `bash tools/check-doc-refs.sh` → 活文档中暂无可检查的代码引用，退出码 0
+- 反面对照：向 architecture.md 注入假全限定名 → 退出码 1 并指出出处
 
 【关联】
 Refs: spec §9 闸门 3、闸门 6
