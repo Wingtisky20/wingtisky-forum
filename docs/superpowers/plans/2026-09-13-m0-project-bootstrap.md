@@ -2060,8 +2060,14 @@ class ArchitectureTest {
 
 - [ ] **Step 2: 运行测试，确认基线通过**
 
-Run: `mvn -q -pl app -am test -Dtest=ArchitectureTest`
-Expected: 4–5 个测试全部 PASS（取决于是否保留规则 5）。
+Run（**⚠️ 命令已修正，2026-09-19**）:
+```bash
+mvn -pl app -am test -Dtest=ArchitectureTest -Dsurefire.failIfNoSpecifiedTests=false
+```
+Expected: 5 个测试全部 PASS。
+
+> **为什么必须加 `-Dsurefire.failIfNoSpecifiedTests=false`**：`-am` 会把所有上游模块拽进 reactor，而 `-Dtest=ArchitectureTest` 在这些模块里匹配不到任何测试，surefire 直接报
+> `No tests matching pattern "ArchitectureTest" were executed!` 并让构建失败。这是本计划第三次踩到 `-am` 的副作用（前两次是 `spring-boot:run` 与 `clean compile` 不产 jar）。
 
 **为什么此时期望通过而非失败**：当前模块是空的，没有违规可抓。这些规则的价值在 M1 之后开始体现——它们是**守卫**而非**待办**。若此时失败，最可能的原因是**包名通配符写错**（例如把 `..forum.forum..` 误写成 `..forum..`——后者会匹配到 `wt-common` 所在的 `com.wingtisky.forum.common`，从而报出大量假违规）。
 
@@ -2092,10 +2098,33 @@ public class PlaceholderInUser {
 }
 ```
 
-Run: `mvn -q -pl app -am test -Dtest=ArchitectureTest`
-Expected: **FAIL**，报错指出 `com.wingtisky.forum.trade.order.TempViolation` 依赖了 `..forum.forum..`（`trade → forum` 跨域依赖）。
+**⚠️ 本步骤原描述经实测不成立（2026-09-19 更正）**：原写"直接创建这两个类然后跑测试"，但 **`trade-order` 的 POM 里没有 `forum-user` 依赖**（本来就该没有），所以 `import` 会先被 **Maven 编译阶段**拦下：
 
-若通过 → **规则失效，必须先修好再继续**（检查 `DOMAINS` 数组的包名通配符与 `importPackages` 范围）。
+```
+[ERROR] COMPILATION ERROR : ... 程序包 com.wingtisky.forum.forum.user 不存在
+```
+
+**这是"错误的原因"，不是"正确的原因"**——它证明的是 Maven 拦住了依赖，而不是 ArchUnit 拦住了依赖。要让本步骤真正验证规则，必须**先把第一道闸门打开**：
+
+```bash
+# 1) 临时给 trade-order 加上 forum-user 依赖（这一步是原描述漏掉的）
+#    在 trade/trade-order/pom.xml 的 <dependencies> 里加：
+#      <dependency><groupId>com.wingtisky</groupId><artifactId>forum-user</artifactId></dependency>
+# 2) 再跑：
+mvn -pl app -am test -Dtest=ArchitectureTest -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+Expected: **FAIL**，规则 2 报错并指名 `TempViolation`：
+
+```
+[ERROR] ArchitectureTest.domainsShouldNotDependOnEachOther:81 Architecture Violation
+  Field <com.wingtisky.forum.trade.order.TempViolation.ref> has type
+  <com.wingtisky.forum.forum.user.PlaceholderInUser>
+```
+
+若加上 POM 依赖后仍然通过 → **规则失效，必须先修好再继续**（检查 `DOMAINS` 数组的包名通配符与 `importPackages` 范围）。
+
+> **副产物结论（值得记住）**：跨域依赖有两道闸门——**Maven 管"能不能看到"，ArchUnit 管"该不该看到"**。Maven 拦得住编译，但拦不住"为了让代码编过，顺手在 POM 里加一条依赖"；ArchUnit 拦的正是后一种。**要验证第二道闸门，必须先人为打开第一道。**
 
 > **为什么违规实验选 trade→forum 而不是其他组合**：这是最可能真实发生的一种跨域依赖——订单需要用户信息，最省事的写法就是 `import` 用户类。用这个组合做实验，等于顺带验证了"最危险的那条路径确实被拦住了"。
 >
@@ -2106,8 +2135,10 @@ Expected: **FAIL**，报错指出 `com.wingtisky.forum.trade.order.TempViolation
 ```bash
 rm trade/trade-order/src/main/java/com/wingtisky/forum/trade/order/TempViolation.java
 rm forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/PlaceholderInUser.java
-# 若为验证"同域依赖应通过"临时加过 trade-product 的占位类，一并删除
-mvn -q -pl app -am test -Dtest=ArchitectureTest
+rm trade/trade-product/src/main/java/com/wingtisky/forum/trade/product/PlaceholderInTradeProduct.java
+# 把 Step 3 临时加进 trade/trade-order/pom.xml 的依赖撤掉
+git checkout -- trade/trade-order/pom.xml
+mvn -pl app -am test -Dtest=ArchitectureTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
 Expected: 全部测试 PASS（回到基线）。
 
