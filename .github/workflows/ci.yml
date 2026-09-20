@@ -1,0 +1,39 @@
+name: CI
+
+# 触发时机：只在 main 相关的事件上跑（GitHub Flow——feature 分支的检查
+# 由 PR 触发，而不是每次 push 都跑）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 编译
+        run: mvn -B -q clean compile
+
+      # 架构规则测试（ArchitectureTest）也在这一步里跑。
+      # CI 中不运行集成测试——本机无 Docker（ADR-0004），集成测试连本地
+      # 中间件，只在本地跑（ADR-0007）。此约定在 M1 后由 @Tag("integration") 落实。
+      - name: 单元测试
+        run: mvn -B test
+
+      - name: 依赖真实性核查（闸门 3）
+        run: bash tools/check-deps.sh
+
+      - name: 文档-代码一致性核查（闸门 6）
+        run: bash tools/check-doc-refs.sh
