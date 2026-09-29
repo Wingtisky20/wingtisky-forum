@@ -31,5 +31,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+
+    <!-- 测试。本模块同时有单元测试（Mockito，不连库）与集成测试
+         （@Tag("integration")，连真实 MySQL 的 test 库，ADR-0007）。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

@@ -38,6 +38,15 @@
     <archunit.version>1.5.0</archunit.version>
     <mybatis-spring-boot.version>3.0.5</mybatis-spring-boot.version>
     <jjwt.version>0.12.7</jjwt.version>
+
+    <!-- 默认排除 @Tag("integration") 的测试（ADR-0007：它们连本机中间件，CI 跑不了）。
+         写成属性而不是在插件里直接写字面量——**Maven 的 -D 只在 POM 用 ${...}
+         表达式时才覆盖得动**；写死字面量的话，命令行传 -DexcludedGroups=xxx 是无效的，
+         而且不报错，只是"测试一个都没跑"却显示 BUILD SUCCESS。
+
+         本地要跑集成测试：
+           mvn test -Dexcluded.groups=__none__ -Dgroups=integration -->
+    <excluded.groups>integration</excluded.groups>
   </properties>
 
   <dependencyManagement>
@@ -166,5 +175,17 @@
         </plugin>
       </plugins>
     </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- 走属性（见 <properties> 里的 excluded.groups），不用字面量——
+               否则命令行覆盖不动 -->
+          <excludedGroups>${excluded.groups}</excludedGroups>
+        </configuration>
+      </plugin>
+    </plugins>
   </build>
 </project>
