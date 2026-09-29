@@ -6,6 +6,17 @@ spring:
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/wingtisky_forum_test?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
 
+# 集成测试用的 JWT 密钥。
+#
+# 这份文件是要入库的，所以**它里面绝不能放真实密钥**——好在这里也不需要：
+# 测试只关心"签发出来的令牌能被自己验回"，用什么密钥无关紧要。
+# 长度必须 ≥ 32 字节，否则 jjwt 会拒绝（这也顺带验证了那条启动期校验是有效的）。
+wt:
+  jwt:
+    secret: integration-test-only-key-not-a-real-secret-32b+
+    access-ttl: 5m
+    refresh-ttl: 10m
+
 mybatis:
   configuration:
     # 集成测试里把 SQL 打出来：SQL 写错时的报错往往很笼统（"语法错误"），
