@@ -185,3 +185,38 @@ curl -x http://127.0.0.1:18569 -L -C - --retry 20 --retry-all-errors \
 **顺带做的一件事**：下载完成后用官方 `.sha512` **校验了文件完整性**（断点续传 + 代理，不验不敢用）。注意 `/dist/` 的校验文件格式是 `<文件名>: <哈希>`，且哈希是**大写**的——直接字符串比较会误报"损坏"，要先剥掉前缀并大小写归一。
 
 **耗时**：下载约 20 分钟（后台，未阻塞其他工作）
+
+---
+
+## 2026-09-19 · `check-deps.sh` 在 CI 上必然失败（本地却一直"通过"）
+
+**现象**：M0 的 PR 一开，CI 第一次真实运行就红了，报错：
+
+```
+[ERROR] Failed to execute goal on project wt-domain:
+  Could not resolve dependencies for project com.wingtisky:wt-domain:jar:1.0.0-SNAPSHOT
+[ERROR] dependency: com.wingtisky:wt-common:jar:1.0.0-SNAPSHOT (compile)
+[ERROR]   Could not find artifact com.wingtisky:wt-common:jar:1.0.0-SNAPSHOT
+```
+
+**根因**：本项目的模块之间有内部依赖（`wt-domain` → `wt-common` 等），**这些坐标不在任何远程仓库里，只能由 Maven 的 reactor 提供**。而 reactor 解析依赖看的是**本次 Maven 会话的状态**——只有在本会话里被 `compile` 过的模块，它的 `target/classes` 才会被当作可用产物。
+
+原脚本把 `dependency:resolve` 单独调用（没有 `compile`），Maven 只能转去本地仓库找 `com.wingtisky:wt-common`，找不到就失败。
+
+**为什么本地一直没暴露**：本机仓库里装着这些 SNAPSHOT（早先 `mvn install` 的残留）。**这个"检查"实际上一直在靠本机残留状态才绿**——它验证的不是依赖真实性，而是"我的机器上恰好装过"。
+
+**解决**：把 `compile` 与 `resolve` 放进**同一次 Maven 调用**：
+
+```bash
+mvn -q -B compile dependency:resolve dependency:resolve-plugins
+```
+
+**复现与验证手法**（这个比结论更值得记）：把本地仓库里的 `com/wingtisky` 暂时挪走，就**在本地复现出了 CI 的失败**；试出修法后，再在同样状态下验证通过，最后还原。
+
+**教训**：
+1. **凡是"调用 `mvn` 做校验"的脚本，都要问一句：它依赖本机仓库的残留状态吗？** 本地绿不代表干净环境绿。
+2. **这正是 CI 存在的意义**。`check-deps.sh` 在 Task 6 写完后本地跑了两次都是绿的，看起来完全正常——它的问题只有在空仓库里才现形。
+
+**顺带发现的一处本地残留**：本机仓库 `com/wingtisky/` 下还留着**旧架构的模块**（`forum-module-user` / `forum-module-content` / `forum-infra` 等，来自已删除的 9 模块骨架）。它们不影响构建（新 POM 不再引用这些坐标），但是**陈旧状态**——留着会让人误以为还有这些模块。
+
+**耗时**：约 15 分钟（含本地复现）
