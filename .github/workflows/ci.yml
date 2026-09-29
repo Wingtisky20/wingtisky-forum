@@ -13,11 +13,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 两个 action 用 v5：v4 已被 GitHub 标记弃用（setup-java 官方公告不再更新，
+      # 且 v4 系列仍指向 Node 20，而 runner 已改用 Node 24）。
+      # 版本已核实真实存在：refs/tags/v5 在 actions/checkout 与 actions/setup-java 均可解析。
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 配置 JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
