@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wingtisky.forum.forum.user.mapper.UserRoleMapper">
+
+    <!-- 用 INSERT IGNORE：重复分配同一角色时静默跳过而不是报主键冲突。
+         注册流程是"插用户 → 插角色关联"，若因重试等原因走到第二次，
+         报错会让整个注册失败，而实际状态是对的。 -->
+    <insert id="insert">
+        INSERT IGNORE INTO t_user_role (user_id, role_id)
+        VALUES (#{userId}, #{roleId})
+    </insert>
+
+    <select id="countByUserId" resultType="int">
+        SELECT COUNT(*)
+        FROM t_user_role
+        WHERE user_id = #{userId}
+    </select>
+
+</mapper>
