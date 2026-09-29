@@ -313,8 +313,18 @@ Result<T> { String code; String message; T data; String traceId; }
 | POST | `/api/auth/refresh` | 用 refresh 换新 access | refresh token |
 | POST | `/api/auth/logout` | 注销（删 Redis 里的 refresh） | 已登录 |
 | GET | `/api/users/me` | 当前用户信息 | 已登录 |
-| PATCH | `/api/users/me` | 改自己的资料 | 已登录 + **归属校验** |
+| ~~PATCH~~ | ~~`/api/users/me`~~ | ~~改自己的资料~~ | **已改为下面那行**，理由见下 |
+| PATCH | `/api/users/{id}` | 改指定用户的资料 | 已登录 + **归属校验**（`@authz.isOwner(#id) or hasRole('ADMIN')`） |
 | GET | `/api/users/{id}` | 个人主页（公开信息） | 无 |
+
+> **为什么把 `PATCH /me` 改成 `PATCH /{id}`**：`/me` 的路径里没有资源标识，
+> 也就**没有"改错人"这种可能**——归属校验永远不会失败，等于没写。
+> 而 M1 的验收闸门恰恰是"越权访问实测被拒"，需要一个能真的失败的路径。
+>
+> 前端不受影响：它本来就从 `GET /me` 拿到了自己的 id。
+> **代价**：前端需要多存一个 id，而不是直接调 `/me`。
+> 若将来觉得这个代价不值，可以两者都提供（`/me` 作为 `/self-id` 的便捷别名），
+> 但**不要只留 `/me`**——那样等于把归属校验从接口层拿掉了。
 
 ---
 
