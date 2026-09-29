@@ -1,0 +1,43 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: wingtisky-forum
+
+  # ------------------------------------------------------------
+  # 数据源
+  #
+  # 密码走环境变量且**没有默认值**：缺失时应用启动即失败，好过悄悄用一个
+  # 可能不对的默认值连上去。这类"失败要失败得早且明显"的取舍，比"尽量能跑起来"
+  # 更省排查时间。
+  # ------------------------------------------------------------
+  datasource:
+    # allowPublicKeyRetrieval=true 不是可选项：MySQL 8 默认用 caching_sha2_password
+    # 认证插件，在非 SSL 连接下首次认证需要向服务端索取公钥，不加这个参数会直接
+    # 报 "Public Key Retrieval is not allowed" —— 这是个只在真连时才暴露的坑。
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/wingtisky_forum?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4}
+    username: ${DB_USERNAME:wingtisky}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: WtHikariPool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      # 3 秒。默认 30 秒会让"数据库连不上"表现为接口卡住半分钟，
+      # 而不是立刻返回错误——排查时很难判断到底是哪里慢。
+      connection-timeout: 3000
+
+mybatis:
+  # classpath*: 前缀支持从多个 jar 中加载 mapper XML（M2 之后会有多个模块各带自己的 XML）
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    # user_name → userName 自动映射。不开启的话每个下划线字段都要手写 resultMap，
+    # 而漏掉一个的后果是那个字段**静默为 null**——不会报错，只是数据不对。
+    map-underscore-to-camel-case: true
+
+logging:
+  pattern:
+    # %X{traceId:-} 从 MDC 取 traceId，取不到时留空（:- 是默认值语法）。
+    # 这一行是 TraceIdFilter 真正发挥价值的地方——没有它，traceId 只是个摆设。
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"

@@ -36,6 +36,8 @@
     <redisson.version>3.52.0</redisson.version>
     <caffeine.version>3.2.4</caffeine.version>
     <archunit.version>1.5.0</archunit.version>
+    <mybatis-spring-boot.version>3.0.5</mybatis-spring-boot.version>
+    <jjwt.version>0.12.7</jjwt.version>
   </properties>
 
   <dependencyManagement>
@@ -113,6 +115,36 @@
         <groupId>com.github.ben-manes.caffeine</groupId>
         <artifactId>caffeine</artifactId>
         <version>${caffeine.version}</version>
+      </dependency>
+
+      <!-- 持久层 -->
+      <!-- ⚠️ 必须是 3.x 线。4.x 的父 POM 声明 spring-boot.version=4.1.0，是给
+           Boot 4 的——**"取最新版"在这里会直接选错**。核实方式见
+           docs/superpowers/plans/2026-09-29-m1-user-and-security.md 的「新增依赖」。 -->
+      <dependency>
+        <groupId>org.mybatis.spring.boot</groupId>
+        <artifactId>mybatis-spring-boot-starter</artifactId>
+        <version>${mybatis-spring-boot.version}</version>
+      </dependency>
+
+      <!-- JWT。拆成三个 artifact 是 jjwt 的设计：api 用于编译，
+           impl 与 jackson 在运行时才需要（这样下游模块编译期只看到 api）。 -->
+      <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-api</artifactId>
+        <version>${jjwt.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-impl</artifactId>
+        <version>${jjwt.version}</version>
+        <scope>runtime</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-jackson</artifactId>
+        <version>${jjwt.version}</version>
+        <scope>runtime</scope>
       </dependency>
 
       <!-- 测试 -->
