@@ -12,7 +12,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "[check-deps] 解析全部依赖（含传递依赖）..."
-if ! mvn -q -B dependency:resolve dependency:resolve-plugins; then
+# ⚠️ 必须先 compile，且必须与 dependency:resolve 在**同一次 Maven 调用**里。
+#
+# 原因：本项目的模块之间存在内部依赖（wt-domain → wt-common 等）。这些
+# 坐标不在任何远程仓库里，只能由 reactor 提供——而 **reactor 解析依赖的是
+# 本次会话的状态**：只有在本会话中被 compile 过的模块，其 target/classes
+# 才会被当作可用产物。
+#
+# 若把 compile 和 resolve 拆成两次 Maven 调用（或省略 compile），Maven 会
+# 转去本地仓库找 com.wingtisky:wt-common:jar，找不到就报
+# "Could not find artifact"。**本机装了这些 SNAPSHOT 所以看不出来，CI 的
+# 空仓库必然失败**——这个坑就是这么在 CI 上炸出来的（见 troubleshooting.md）。
+if ! mvn -q -B compile dependency:resolve dependency:resolve-plugins; then
   echo "[check-deps] 失败：存在无法解析的依赖。请核实坐标是否真实存在于 Maven Central。"
   exit 1
 fi
