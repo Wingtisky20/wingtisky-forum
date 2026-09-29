@@ -96,6 +96,22 @@ class GlobalExceptionHandlerTest {
                 .andExpect(header().exists(TraceIdFilter.TRACE_ID_HEADER));
     }
 
+    @Test
+    @DisplayName("请求体不是合法 JSON → 400，不能掉进兜底变成 500")
+    void unreadableRequestBodyMapsTo400Not500() throws Exception {
+        // 这条是被真实场景逼出来的：用 curl 发了一段编码不对的中文，
+        // 应用返回 500——把"调用方发了畸形请求"报成了"服务端出错"，
+        // 监控会因此产生大量噪音告警。请求体问题是客户端的错，就该是 4xx。
+        mockMvc.perform(post("/test/valid")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{这不是合法JSON"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("A0001"))
+                // 但不把 Jackson 的原始信息透出去（那会暴露内部类名与字段路径）
+                // 注：期望值必须是字符串——ErrorCode 的 code 就是 String 类型
+                .andExpect(jsonPath("$.message").value("请求体格式不正确"));
+    }
+
     // ---------- 测试用的最小控制器：只负责抛异常 ----------
 
     @RestController

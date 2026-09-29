@@ -5,6 +5,7 @@ import com.wingtisky.forum.common.result.Result;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -41,6 +42,24 @@ public class GlobalExceptionHandler {
         log.warn("业务异常: code={}, message={}", errorCode.getCode(), e.getMessage());
         return ResponseEntity.status(errorCode.getHttpStatus())
                 .body(Result.error(errorCode, e.getMessage()));
+    }
+
+    /**
+     * 请求体读不出来：JSON 语法错误、编码不是 UTF-8、类型对不上等。
+     *
+     * <p><b>必须单独接住，否则会掉进兜底分支报成 500。</b>这是**调用方的问题**，
+     * 报 500 的后果不只是状态码难看：监控会把"有人发了个畸形请求"统计成
+     * "服务端出错"，告警会被噪音淹没，真出事时反而看不见。
+     *
+     * <p><b>但响应里不说具体哪里错</b>：Jackson 的原始信息会带上期望的类名、
+     * 字段路径等内部结构，对调用方没有价值，对探测者却是免费的线索。
+     * 细节只进日志。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Result<Void>> handleUnreadableBody(HttpMessageNotReadableException e) {
+        log.warn("请求体无法解析: {}", e.getMessage());
+        return ResponseEntity.status(ErrorCode.PARAM_INVALID.getHttpStatus())
+                .body(Result.error(ErrorCode.PARAM_INVALID, "请求体格式不正确"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
