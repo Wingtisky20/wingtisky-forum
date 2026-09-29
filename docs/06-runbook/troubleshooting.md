@@ -311,3 +311,51 @@ DB_URL="jdbc:mysql://...?useSSL=false&allowPublicKeyRetrieval=true&..."
 ```
 
 **验证**：`set -a; . ./.env; set +a; echo ${#DB_URL}` → 应输出完整长度（本项目为 138），空值或过短说明被截断了。
+
+---
+
+## 2026-09-29 · Maven 的 `-D` 覆盖不动 POM 里写死的字面量
+
+**现象**：想临时跑被排除的测试，命令行传了 `-DexcludedGroups=__none__`，
+结果**一个测试都没跑，却显示 `BUILD SUCCESS`**——没有任何报错提示"你的参数没生效"。
+
+**根因**：Maven 的用户属性（`-D`）**只在 POM 用 `${...}` 表达式时才覆盖得动**。
+POM 里写死 `<excludedGroups>integration</excludedGroups>` 时，这个字面量赢，
+命令行参数被静默忽略。
+
+**解决**：把值抽成属性，POM 里写表达式：
+
+```xml
+<properties>
+    <excluded.groups>integration</excluded.groups>
+</properties>
+...
+<configuration>
+    <excludedGroups>${excluded.groups}</excludedGroups>
+</configuration>
+```
+
+之后 `-Dexcluded.groups=__none__` 才生效。
+
+**为什么这条危险**：它的失败模式是**静默的成功**——构建绿、没有报错、
+你以为测试跑了。同类问题还包括"以为改了配置，其实没改"。
+**判断依据是"测试数对不对"，不是"构建绿不绿"。**
+
+---
+
+## 2026-09-29 · `-am` 缺失导致的"本地仓库陈旧"第三次咬人
+
+**现象**：集成测试一跑就 `NoClassDefFoundError: com/wingtisky/forum/common/result/ErrorCode`——
+而那个类明明就在 `wt-common` 里，且刚刚编译通过。
+
+**根因**：`mvn -pl app test` **没带 `-am`**。这种情况下 Maven 不从 reactor 构建上游模块，
+而是去**本地仓库**找 `wt-common:1.0.0-SNAPSHOT`——而本地仓库里装的是**改动之前的旧版本**，
+里面没有 `ErrorCode`。
+
+**这是同一个根因的第三次**：
+1. CI 首跑时 `check-deps.sh` 失败（内部模块坐标只由 reactor 提供）
+2. `mvn -pl app dependency:tree` 显示的是旧版 wt-infra 的依赖树
+3. 本次
+
+**已经固化成一条规则**：**凡是对单个模块执行 `-pl <module>`，一律同时带上 `-am`。**
+不是"需要时才加"——本地仓库里有旧版本时，不加就会静默地用错东西。
