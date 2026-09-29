@@ -53,7 +53,7 @@
 | 6 | 防漂移脚本 tools/（`check-deps` + `check-doc-refs` + README） | ✅ **完成** | `[REAL]` |
 | 7 | 架构边界测试（ArchitectureTest）+ CI 骨架 | ✅ **完成** | 测试 `[REAL]`／**CI `[UNVERIFIED]`** |
 | 8 | 本地中间件：ES 8.18.3 + IK、Kafka 3.9.1（KRaft）安装与启动验证 | ✅ **完成** | `[REAL]` |
-| 9 | GitHub 仓库创建与推送 | **仓库已建并推送**；分支保护与 CI 待补 | `[REAL]` |
+| 9 | GitHub 仓库 / main 分支保护 / **CI 首次真实运行** | ✅ **完成**（PR #1，CI 绿） | `[REAL]` |
 | 10 | M0 收尾 | 未开始 | — |
 
 > **两点说明**：
@@ -117,9 +117,13 @@ app/                                        单进程启动模块（唯一 main�
 
 ## 下一步
 
-**Task 9 · 分支保护 + CI 首次真实运行**——给 `main` 配分支保护规则，然后开 M0 的 PR，让 CI 第一次真的跑起来（目前 `ci.yml` 仍是 `[UNVERIFIED]`）。
+**Task 10 · M0 收尾**（M0 最后一步）：更新 STATUS 与执行记录 → 打 `m0-done` 注解 tag → **合并 PR #1 到 `main`**。
 
-之后是 **Task 10 · M0 收尾**：更新 STATUS、写执行记录、打 `m0-done` tag、把 `feature/m0-bootstrap` 合并进 `main`（**这是本仓库第一次 merge，也是演练 Merge commit 的机会**）。
+> **合并方式已由分支保护强制**：`main` 现在要求走 PR、且 `build` 检查必须通过。
+> PR #1 两者都满足，可以直接合。**这将是本仓库的第一次 merge**，也是第一次
+> 真正看到 Merge commit（`--no-ff`）长什么样——ADR-0008 的结论届时才算被验证过。
+
+**M0 剩余**：仅 Task 10。
 
 > **中间件当前状态**：ES 与 Kafka 已完成启动验证，**验证后已关闭**——按 architecture.md §6.2 的"按需启动"纪律，它们到 M3/M4/M5 才需要。启动用 `scripts/start-es.bat` / `scripts/start-kafka.bat`，装法见 `docs/06-runbook/local-setup.md`。
 
@@ -136,8 +140,9 @@ app/                                        单进程启动模块（唯一 main�
 | **Redisson 3.52.0 与 Redis 5.0.14.1 运行时兼容性**（仅做过编译期验证） | **M3**。若报 `ERR unknown command`，降级 Redisson 并写 ADR 修订 |
 | **ADR-0007 的 Testcontainers 评估时点**——spec §7.2 记 M7、§12 开放问题表记 M10 | M7 / M10 开工前先定一个，回填 spec 或 ADR-0007 |
 | **spec §10.2 把合并方式的修订标为「2026-09-13」，但该修订的提交日期是 2026-09-19** | 低优先，顺手校正 |
-| **CI 从未真实运行过**（`.github/workflows/ci.yml` 的触发条件是 main 的 push/PR，而改动都在 feature 分支） | **Task 9** 开 PR 时首次运行，届时补 `[REAL]` 证据 |
 | **IK 分词器与 ES 8.18 的 Entitlements 机制**——ES 8.18 起用 Entitlements 取代旧的 SecurityManager，IK 仍是旧格式，安装时告警但可用 | 升级 ES 时（M5 之后）重新核实；见 `local-setup.md` §5.3 |
+| **GitHub Actions 的弃用警告**——CI 日志提示 `actions/setup-java@v4` 已弃用（建议迁 v5），`actions/checkout@v4` 仍指向 Node 20 而 runner 已用 Node 24；另 `ubuntu-latest` 将于 2026-10 起迁移到 Ubuntu 26 | 不阻塞。升级前需先核实新版本真实存在，**待用户决定是否现在升** |
+| **本机 Maven 仓库残留旧架构模块**——`com/wingtisky/` 下还有 `forum-module-*`、`forum-infra` 等已删除骨架的目录 | 不影响构建，但属陈旧状态；清除前需确认旧项目是否还需要 |
 
 ## 决策轨迹
 
