@@ -109,3 +109,79 @@ gh auth status   # → Token scopes: 'gist', 'read:org', 'repo', 'workflow'
 随后推送成功。
 
 **耗时**：约 20 分钟，其中大部分花在"那串码在哪"的误解上。
+
+---
+
+## 2026-09-19 · Windows 上写中间件启停脚本踩的三个坑
+
+装 ES 8 + Kafka 3.9 时写的两个 `.bat` 脚本**连报三次错**，逐个记下来。三条都不是本项目特有，凡是 Windows + 中文环境 + Git Bash 的组合都会遇到。
+
+### 坑 1：`.bat` 里的中文注释会把整个脚本弄崩
+
+**现象**：脚本里写了中文 `REM` 注释，执行时报一串
+
+```
+'按物理内存的一半算堆，16G' is not recognized as an internal or external command
+'elasticsearch.bat' is not recognized as an internal or external command
+```
+
+**根因**：`.bat` 文件在 git 里存为 **UTF-8**，而 zh-CN 控制台上的 `cmd.exe` 按 **GBK** 解码它。中文注释的字节被错解后，行结构被拆散——**注释的残片被当成命令执行，连后面正常的 `call` 行也一起失效**。
+
+**试过但没用的做法**：在脚本开头加 `chcp 65001`。不管用——cmd 读取文件内容发生在切换代码页之前，该崩还是崩。
+
+**解决**：**`.bat` 文件一律只用 ASCII**。中文解释放 `.md` 文档里（那份是给人看的，UTF-8 完全没问题）。
+一开始担心"注释不写中文不友好"，但脚本是给机器跑的——**能跑起来**比注释好看重要得多。
+
+### 坑 2：`call elasticsearch.bat` 报"不是内部或外部命令"，但 `cd` 明明成功了
+
+**现象**：脚本里 `cd /d D:\...\bin` 之后 `call elasticsearch.bat`，报找不到；用**完整路径**调用同一个文件却正常。
+
+**根因**：**Git Bash 会设置 `NoDefaultCurrentDirectoryInExePath=1` 并传给子进程**。这个变量一开，`cmd.exe` 就不再从当前目录查找可执行文件——所以即使 `cd` 成功，相对文件名也找不到。
+
+**验证**：
+
+```bash
+cmd //c "set NoDefault"     # → NoDefaultCurrentDirectoryInExePath=1
+```
+
+**解决**：显式写出路径前缀——`call .\elasticsearch.bat`。加 `.\` 就绕过了当前目录查找的限制。
+
+> **注意适用范围**：从普通 cmd / PowerShell（不走 Git Bash）启动脚本时不会有这个问题，`.bat` 里的相对路径是正常的。**是 Git Bash 把它们的环境变量传染了下去。** 但不加 `.\` 的话，从 Git Bash 调用就会失败——而本项目大量命令都在 Git Bash 里跑，所以统一加。
+
+### 坑 3：Kafka 格式化把数据写到了 `D:\tmp`
+
+**现象**：还没配 `log.dirs` 就先跑了 `kafka-storage.bat format`，输出
+
+```
+Formatting metadata directory /tmp/kraft-combined-logs
+```
+
+`/tmp` 在 Windows 上不是 Git Bash 的 `/tmp`，而是**当前盘根目录下的 `tmp`** ——实际落在了 `D:\tmp\kraft-combined-logs`（当时的当前盘是 D）。
+
+**根因**：Kafka 默认配置 `log.dirs=/tmp/kraft-combined-logs` 是 Linux 风格路径，Windows 上被解析成盘相对路径。
+
+**解决**：**先改配置再格式化**——`config/kraft/server.properties` 里把 `log.dirs` 指向真实路径，然后重新格式化，并删掉误建目录。
+
+**教训**：**顺序错了要返工**。"生成集群 ID → 格式化"看起来是准备阶段，但格式化会**按当时生效的配置**落盘，所以配置必须在它之前改完。
+
+---
+
+## 2026-09-19 · Kafka 3.9.1 下载极慢（归档版本没有国内镜像）
+
+**现象**：下载 `kafka_2.13-3.9.1.tgz`（116 MB），直连 `archive.apache.org` 约 **8 KB/s**，预计两个多小时；走 Clash 代理约 **16 KB/s**，仍然很慢。
+
+**根因**：**Kafka 3.9.x 已是归档版本**，而国内 Apache 镜像（清华 / 阿里 / 中科大 / 南大 / 网易 / 华为云）**只保留当前发布版**——实测这些镜像上只有 4.1.2 / 4.2.1 / 4.2.2 / 4.3.1，**3.9.x 一律 404**。归档只能从 `archive.apache.org` 取。
+
+**解决**：走代理 + 断点续传 + 自动重试，**放后台跑**（实测最终约 8 MB/s，总耗时约 20 分钟）：
+
+```bash
+curl -x http://127.0.0.1:18569 -L -C - --retry 20 --retry-all-errors \
+  -o kafka_2.13-3.9.1.tgz \
+  "https://archive.apache.org/dist/kafka/3.9.1/kafka_2.13-3.9.1.tgz"
+```
+
+**关键点**：**它不该阻塞其他工作**。正确的顺序是——Kafka 丢后台下载，**同时去装 ES**。两个中间件本来就没有依赖关系，串行等它纯属浪费。
+
+**顺带做的一件事**：下载完成后用官方 `.sha512` **校验了文件完整性**（断点续传 + 代理，不验不敢用）。注意 `/dist/` 的校验文件格式是 `<文件名>: <哈希>`，且哈希是**大写**的——直接字符串比较会误报"损坏"，要先剥掉前缀并大小写归一。
+
+**耗时**：下载约 20 分钟（后台，未阻塞其他工作）
