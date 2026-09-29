@@ -19,5 +19,46 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter</artifactId>
     </dependency>
+
+    <!-- web 用 provided 作用域，不是 compile —— 这个作用域选择是必需的，不是风格问题：
+         GlobalExceptionHandler 是 @RestControllerAdvice，属于 Spring MVC，编译 wt-common
+         时必须有它。但若用 compile，web 会**传递给所有下游模块**——seckill-coupon /
+         forum-search / forum-notify 本就不该绑定 Tomcat（M0 Task 1 的依赖表专门做过这个
+         区分），凭空拿到 web 会让那道边界失效。
+         provided 不传递；运行时由 app 模块提供（app 本来就引了 starter-web）。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- 同样用 provided：GlobalExceptionHandler 需要把 Spring Security 抛出的
+         AccessDeniedException 映射成 403 的统一响应体（而不是让它冒到 Security 的
+         ExceptionTranslationFilter 去返回一个格式不同的默认错误页）。
+         异常 → 错误码的映射是 API 契约的一部分，集中在一处才不会漏；
+         而拆散到各业务模块，迟早会出现"某个入口的 403 格式和别人不一样"。
+         不与 web 一样传递下去，理由同上。 -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-core</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- 参数校验。**用 compile 作用域传递下去，与上面的 web 相反**——这个区别是刻意的：
+         凡是写 DTO 的模块都需要它（@NotBlank / @Size 等），而它**不绑定任何 servlet 容器**，
+         传递下去是安全的。web 之所以必须 provided，正是因为它会把 Tomcat 也带过去。
+         （另注：spring-boot-starter-web 自 Boot 2.3 起就不再包含校验，必须单独引。） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- 测试。wt-common 里的逻辑（错误码映射、异常 → 响应体的转换）是最先被所有接口
+         使用的部分，出问题时影响面最大，因此它自己要有测试，不能只靠下游间接验证。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>
