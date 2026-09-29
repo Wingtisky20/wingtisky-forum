@@ -107,6 +107,13 @@ mybatis:
     map-underscore-to-camel-case: true
 
 logging:
+  charset:
+    # ⚠️ 必须显式指定。不写的话日志用**平台默认编码**——中文 Windows 上是 GBK，
+    # 于是日志里的中文既 grep 不到、重定向出来看也是乱码。实测踩过：限流降级明明
+    # 打了 15 条 ERROR，`grep 限流降级` 却是 0 条，一度被误导成"这里根本没打日志"。
+    # UTF-8 也是 Linux/CI 的默认值，统一之后各处一致。
+    # 交互式终端若显示乱码，执行 chcp 65001 切到 UTF-8 代码页即可。
+    console: UTF-8
   pattern:
     # %X{traceId:-} 从 MDC 取 traceId，取不到时留空（:- 是默认值语法）。
     # 这一行是 TraceIdFilter 真正发挥价值的地方——没有它，traceId 只是个摆设。
