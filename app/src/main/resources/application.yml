@@ -65,6 +65,39 @@ wt:
     access-ttl: 30m
     refresh-ttl: 7d
 
+  # ------------------------------------------------------------
+  # 限流（亮点 5）
+  #
+  # ⚠️ 规则是**按顺序匹配、第一条命中生效**，因此具体路径必须排在通配前面——
+  #    把 /api/** 放前面的话，登录接口就拿不到它自己的严格阈值了。
+  #
+  # ⚠️ 下面这些数字是**初始值**，M10 压测时校准。现在写死一个"看起来合理"的
+  #    数字没有依据，所以放进配置，改的时候不用重新编译。
+  # ------------------------------------------------------------
+  rate-limit:
+    enabled: true
+    rules:
+      # 登录与注册：按 IP 限。fallback 用 local 而不是 open——
+      # 这类限流的**唯一目的就是防撞库**，Redis 挂了就全放行等于在最需要它的时候把门打开
+      - path: /api/auth/login
+        dimension: ip
+        limit: 10
+        window: 1m
+        fallback: local
+      - path: /api/auth/register
+        dimension: ip
+        limit: 10
+        window: 1m
+        fallback: local
+
+      # 普通接口：按登录用户限。不用 IP 是因为同一个办公室共用一个出口 IP，
+      # 按 IP 限会把无辜的人一起限掉。未登录时自动退回 IP。
+      - path: /api/**
+        dimension: user
+        limit: 100
+        window: 1m
+        fallback: open
+
 mybatis:
   # classpath*: 前缀支持从多个 jar 中加载 mapper XML（M2 之后会有多个模块各带自己的 XML）
   mapper-locations: classpath*:mapper/**/*.xml
