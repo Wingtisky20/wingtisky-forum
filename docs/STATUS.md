@@ -159,6 +159,7 @@ app/                                        单进程启动模块（唯一 main�
 | **IK 分词器与 ES 8.18 的 Entitlements 机制**——ES 8.18 起用 Entitlements 取代旧的 SecurityManager，IK 仍是旧格式，安装时告警但可用 | 升级 ES 时（M5 之后）重新核实；见 `local-setup.md` §5.3 |
 | **`ubuntu-latest` 将于 2026-10 起迁移到 Ubuntu 26**（GitHub 自己的 runner 迁移通知） | 不阻塞；迁移后 CI 重跑一次确认即可。Actions 的弃用警告已随 v5 升级消除 |
 | **本机 Maven 仓库残留旧架构模块**——`com/wingtisky/` 下还有 `forum-module-*`、`forum-infra` 等已删除骨架的目录 | 不影响构建，但属陈旧状态；清除前需确认旧项目是否还需要 |
+| **限流的"按用户名"维度未实现**——设计 §5.4 原本要求登录同时按 IP 与用户名限，M1 只做了 IP | **M1 有意留的缺口**，理由与建议做法写在设计 §5.4。若 M2 之后仍不做，需在此标注为"决定不做"而非"待做" |
 
 ## 决策轨迹
 
