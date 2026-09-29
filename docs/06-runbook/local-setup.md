@@ -41,7 +41,7 @@
 
 ---
 
-## 3. MySQL 8.0（沿用）
+## 3. MySQL 8.0
 
 已作为 Windows 服务常驻，无需额外操作。
 
@@ -50,7 +50,57 @@ mysql --version          # → Ver 8.0.41 for Win64 on x86_64
 netstat -ano | grep ':3306 ' | grep LISTENING   # → 有输出即在跑
 ```
 
+### 3.1 建库与建账号（**一次性步骤，需要 root**）
+
+**不要用 root 跑应用**——给项目一个只能碰自己那两个库的账号：
+
+```sql
+CREATE DATABASE IF NOT EXISTS wingtisky_forum      DEFAULT CHARACTER SET utf8mb4;
+CREATE DATABASE IF NOT EXISTS wingtisky_forum_test DEFAULT CHARACTER SET utf8mb4;
+
+CREATE USER IF NOT EXISTS 'wingtisky'@'localhost' IDENTIFIED BY '换成你自己的密码';
+GRANT ALL PRIVILEGES ON wingtisky_forum.*      TO 'wingtisky'@'localhost';
+GRANT ALL PRIVILEGES ON wingtisky_forum_test.* TO 'wingtisky'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+验证最小授权——应当**只有**这两个库，没有 `*.*` 的通配权限：
+
+```bash
+mysql -u root -p -e "SHOW GRANTS FOR 'wingtisky'@'localhost';"
+```
+
 **本项目约定**：集成测试连**独立的 test 库**，不污染开发数据（ADR-0007）。
+
+### 3.2 建表
+
+```bash
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum      < db/V1__init_user.sql
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum_test < db/V1__init_user.sql
+```
+
+> ⚠️ **`--default-character-set=utf8mb4` 不能省。** Windows 上 mysql 客户端的默认字符集是
+> **gbk**，而脚本文件是 UTF-8。不加这个参数时：**脚本执行成功、退出码 0、没有任何报错**，
+> 但中文会被写坏（转不过去的字符变成 `?`，**不可恢复**）。
+> 详见 `troubleshooting.md` 同日条目。
+
+**验证要查字节，不要肉眼看终端**（终端编码会骗你）：
+
+```sql
+SELECT code, name, HEX(name), CHAR_LENGTH(name) AS chars, LENGTH(name) AS bytes FROM t_role;
+-- 期望：版主 → E78988E4B8BB / 2 字 / 6 字节（每个汉字 3 字节）
+```
+
+### 3.3 凭据怎么给应用
+
+复制 `.env.example` 为 `.env` 并填值（`.env` 已在 `.gitignore` 里，**绝不入库**）：
+
+```bash
+cp .env.example .env
+```
+
+> ⚠️ `.env` 里含 `&` 的值**必须加引号**，否则 `source .env` 会把 `&` 当后台运算符，
+> 变量只被赋值到第一个 `&` 之前（实测结果是空值）。
 
 ---
 

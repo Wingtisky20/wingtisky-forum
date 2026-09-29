@@ -13,10 +13,20 @@ spring:
   # 更省排查时间。
   # ------------------------------------------------------------
   datasource:
-    # allowPublicKeyRetrieval=true 不是可选项：MySQL 8 默认用 caching_sha2_password
-    # 认证插件，在非 SSL 连接下首次认证需要向服务端索取公钥，不加这个参数会直接
-    # 报 "Public Key Retrieval is not allowed" —— 这是个只在真连时才暴露的坑。
-    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/wingtisky_forum?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4}
+    # 三个参数都不是随手加的，各有各的坑：
+    #
+    # · characterEncoding=**UTF-8，不是 utf8mb4**
+    #   这个参数要的是 **Java 的字符集名**，而 utf8mb4 是 MySQL 的叫法。写 utf8mb4 会直接
+    #   报 "Unsupported character encoding 'utf8mb4'" 启动失败。Connector/J 8+ 收到 UTF-8
+    #   后会自行协商成 MySQL 侧的 utf8mb4 排序规则，不需要也不应该写 utf8mb4。
+    #
+    # · allowPublicKeyRetrieval=true
+    #   MySQL 8 默认用 caching_sha2_password 认证插件，非 SSL 连接下首次认证需要向服务端
+    #   索取公钥；不加会报 "Public Key Retrieval is not allowed"。
+    #
+    # · useSSL=false
+    #   仅本地开发。生产必须开启 TLS（见 docs/06-runbook/local-setup.md §9）。
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/wingtisky_forum?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8}
     username: ${DB_USERNAME:wingtisky}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver

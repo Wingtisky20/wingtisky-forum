@@ -32,16 +32,18 @@
       <scope>provided</scope>
     </dependency>
 
-    <!-- 同样用 provided：GlobalExceptionHandler 需要把 Spring Security 抛出的
-         AccessDeniedException 映射成 403 的统一响应体（而不是让它冒到 Security 的
-         ExceptionTranslationFilter 去返回一个格式不同的默认错误页）。
-         异常 → 错误码的映射是 API 契约的一部分，集中在一处才不会漏；
-         而拆散到各业务模块，迟早会出现"某个入口的 403 格式和别人不一样"。
-         不与 web 一样传递下去，理由同上。 -->
+    <!-- 这里**曾经写成 provided，是错的**，留此注释以免被"改回去"。
+         GlobalExceptionHandler 需要把 AccessDeniedException 映射成 403 的统一响应体
+         （而不是让它冒到 Security 的 ExceptionTranslationFilter 去返回格式不同的默认错误页）；
+         异常 → 错误码的映射是 API 契约的一部分，集中在一处才不会漏。
+
+         教训：**provided 的前提是"运行时确实有人提供它"**。web 标 provided 成立，是因为
+         app 模块自己引了 starter-web；而 spring-security-core 当时没人提供——
+         Spring Security 要到 Task 4 才引入。于是编译期与单测都通过（单测不扫组件），
+         应用一启动就 NoClassDefFoundError。这类错误只有**真启动**才暴露。 -->
     <dependency>
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-core</artifactId>
-      <scope>provided</scope>
     </dependency>
 
     <!-- 参数校验。**用 compile 作用域传递下去，与上面的 web 相反**——这个区别是刻意的：
