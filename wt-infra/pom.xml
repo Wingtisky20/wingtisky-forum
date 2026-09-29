@@ -48,10 +48,23 @@
 
          ⚠️ 本机服务端是 MySQL 8.0.41，而驱动是 9.7.0——**这个组合必须实测**
          （与"Redisson 3.52 × Redis 5"同类问题）。若不兼容，在父 POM 显式固定到
-         8.0.x 并记入 ADR-0001 的修订。 -->
+         8.0.x 并记入 ADR-0001 的修订。
+         实测结论：✅ 兼容（见 2026-09-29 的 troubleshooting 与 Task 2 的提交）。 -->
     <dependency>
       <groupId>com.mysql</groupId>
       <artifactId>mysql-connector-j</artifactId>
+    </dependency>
+
+    <!-- Redis 客户端。
+         用的是 Spring 官方 starter（底层 Lettuce），**不是 Redisson**：
+         本项目对 Redis 的用法是"执行 Lua 脚本 + 存取字符串/有序集合"，
+         RedisTemplate 是这条路径的标准工具，资料也最多。
+         Redisson 的强项是分布式锁与分布式对象，留给 M8 的亮点 7。
+
+         代价：M8 起会有两个 Redis 客户端共存，届时要分清各自用途。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
     </dependency>
   </dependencies>
 </project>
