@@ -52,7 +52,7 @@
 | 5 | ADR 机制与 11 条 ADR（索引 + 模板 + **0001~0008 正文全部补写**） | ✅ **完成** | `[REAL]` |
 | 6 | 防漂移脚本 tools/（`check-deps` + `check-doc-refs` + README） | ✅ **完成** | `[REAL]` |
 | 7 | 架构边界测试（ArchitectureTest）+ CI 骨架 | ✅ **完成** | 测试 `[REAL]`／**CI `[UNVERIFIED]`** |
-| 8 | 本地中间件 ES8 + Kafka3.9 | 未开始 | — |
+| 8 | 本地中间件：ES 8.18.3 + IK、Kafka 3.9.1（KRaft）安装与启动验证 | ✅ **完成** | `[REAL]` |
 | 9 | GitHub 仓库创建与推送 | **仓库已建并推送**；分支保护与 CI 待补 | `[REAL]` |
 | 10 | M0 收尾 | 未开始 | — |
 
@@ -117,10 +117,11 @@ app/                                        单进程启动模块（唯一 main�
 
 ## 下一步
 
-**Task 8 · 本地中间件 ES 8 + Kafka 3.9**——安装并做**启动验证**（M0 闸门要求 `[REAL]`）。
-⚠️ **这一步需要你在本机配合**（下载安装、确认端口、启动进程），不适合无人值守地跑。
+**Task 9 · 分支保护 + CI 首次真实运行**——给 `main` 配分支保护规则，然后开 M0 的 PR，让 CI 第一次真的跑起来（目前 `ci.yml` 仍是 `[UNVERIFIED]`）。
 
-Task 8 之后是 Task 9（分支保护 + CI 首次真实运行）与 Task 10（M0 收尾 + 打 tag + 首次合并到 main）。
+之后是 **Task 10 · M0 收尾**：更新 STATUS、写执行记录、打 `m0-done` tag、把 `feature/m0-bootstrap` 合并进 `main`（**这是本仓库第一次 merge，也是演练 Merge commit 的机会**）。
+
+> **中间件当前状态**：ES 与 Kafka 已完成启动验证，**验证后已关闭**——按 architecture.md §6.2 的"按需启动"纪律，它们到 M3/M4/M5 才需要。启动用 `scripts/start-es.bat` / `scripts/start-kafka.bat`，装法见 `docs/06-runbook/local-setup.md`。
 
 > Task 7 的 `README.md` 计划书原写"新建"，但仓库里已有一份（`76f71cf`，113 行），
 > 内容已覆盖计划书要求的全部章节且更有人味，**故本任务未改动它**。
@@ -136,6 +137,7 @@ Task 8 之后是 Task 9（分支保护 + CI 首次真实运行）与 Task 10（M
 | **ADR-0007 的 Testcontainers 评估时点**——spec §7.2 记 M7、§12 开放问题表记 M10 | M7 / M10 开工前先定一个，回填 spec 或 ADR-0007 |
 | **spec §10.2 把合并方式的修订标为「2026-09-13」，但该修订的提交日期是 2026-09-19** | 低优先，顺手校正 |
 | **CI 从未真实运行过**（`.github/workflows/ci.yml` 的触发条件是 main 的 push/PR，而改动都在 feature 分支） | **Task 9** 开 PR 时首次运行，届时补 `[REAL]` 证据 |
+| **IK 分词器与 ES 8.18 的 Entitlements 机制**——ES 8.18 起用 Entitlements 取代旧的 SecurityManager，IK 仍是旧格式，安装时告警但可用 | 升级 ES 时（M5 之后）重新核实；见 `local-setup.md` §5.3 |
 
 ## 决策轨迹
 
