@@ -149,6 +149,11 @@
 
 ### 4.2 边界规则（强制）
 
+> **已变更（2026-09-13）**：下文的模块名（`forum-common` / `forum-domain` / `forum-infra` / `forum-boot`）属于旧 9 模块结构，现名分别为 `wt-common` / `wt-domain` / `wt-infra` / `app`。
+> **四条规则本身一条没变**——变的只是名字。现名对照表见 `docs/02-decisions/ADR-0002-modular-monolith.md` 的「修订记录」，完整结构见 `architecture.md` §3.1。
+>
+> 本条是 M0 收尾自查时补的：同一文件的 §4.1 早已标注"已变更"，§4.2 却仍写旧名，属于同一份文档内部自相矛盾。
+
 1. `forum-common` **不依赖任何业务模块**，不含业务逻辑。
 2. `forum-domain` 只放**契约**（模型 + 接口），**不放实现**。
 3. 业务模块**只能**依赖 `common` / `domain` / `infra`，**不得依赖其他业务模块的 internal 包**。
