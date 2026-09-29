@@ -31,5 +31,44 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+
+    <!-- Spring Security。放在 forum-user 是因为认证与鉴权的装配点在这里
+         （SecurityConfig 定义 SecurityFilterChain）。
+         其他模块要用 @PreAuthorize 的话，spring-security-core 已由 wt-common 传递提供，
+         不需要各自再引。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <!-- JWT（jjwt）。
+         拆成三个 artifact 是 jjwt 的设计：api 给编译期用，impl 与 jackson 只在
+         运行时需要——这样下游模块的编译期类路径上只有 api，减少误用内部实现类。
+         版本与作用域都在父 POM 的 dependencyManagement 里，这里不重复写。 -->
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-impl</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-jackson</artifactId>
+    </dependency>
+
+    <!-- 测试。本模块同时有单元测试（Mockito，不连库）与集成测试
+         （@Tag("integration")，连真实 MySQL 的 test 库，ADR-0007）。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-test</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

@@ -1,0 +1,153 @@
+### ============================================================
+### M1 接口冒烟测试
+###
+### 怎么用：IDEA 点每个请求左侧的箭头运行；VS Code 装 REST Client 插件后同样。
+###
+### 前置：MySQL 与 Redis 已启动，应用已运行在 8080（环境变量从 .env 读，见 local-setup.md §3.3）
+###
+### ⚠️ **顺序有依赖，按编号跑**：
+###    - 先注册，后面的请求才有数据
+###    - **注销会撤销刷新令牌**，所以「刷新」相关的测试必须排在「注销」之前，
+###      而「注销后刷新失败」要排在注销之后。这个顺序不是随意排的。
+### ============================================================
+
+@host = http://localhost:8080
+@username = smoke_user
+@password = smoke-pw-12345
+
+### 1. 注册
+### 期望：200，data 是新用户的 id（数字）
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "{{password}}",
+  "nickname": "冒烟测试"
+}
+
+### 2. 重复注册
+### 期望：409，code=A0101「用户名已被占用」
+### 这条同时验证了数据库唯一索引真的存在
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "{{password}}",
+  "nickname": "重复注册"
+}
+
+### 3. 参数校验：用户名太短
+### 期望：400，code=A0001，message 里指出是 username 字段
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "ab",
+  "password": "{{password}}",
+  "nickname": "太短"
+}
+
+### 4. 登录
+### 期望：200，data 里有 accessToken 与 refreshToken
+### 下方脚本会自动把两个令牌存进变量，后面的请求直接用
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "{{password}}"
+}
+
+> {% client.global.set("access", response.body.data.accessToken); %}
+> {% client.global.set("refresh", response.body.data.refreshToken); %}
+
+### 5. 密码错误
+### 期望：401，code=A0102「用户名或密码错误」
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "wrong-password"
+}
+
+### 6. 用户不存在
+### 期望：**同样是 401 + A0102**，与第 5 条一字不差（除 traceId）
+### 这两条必须完全一样——否则接口就成了用户名探测器
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "no_such_user_at_all",
+  "password": "whatever-12345"
+}
+
+### 7. 用刷新令牌换新令牌
+### 期望：200，且**新的 refreshToken 与旧的不同**（发生了轮换）
+### ⚠️ 必须在注销之前跑，否则拿到的一定是 401
+POST {{host}}/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refresh}}"
+}
+
+### 8. 用【已经被轮换掉的】旧刷新令牌再换一次
+### 期望：401 —— 这就是轮换的意义
+POST {{host}}/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refresh}}"
+}
+
+### 9. 不带令牌访问受保护接口
+### 期望：401，code=A0002
+### 注意响应体是统一格式——它不是 @RestControllerAdvice 处理的（那发生在过滤器链阶段）
+POST {{host}}/api/auth/logout
+
+### 10. 带令牌访问
+### 期望：200
+POST {{host}}/api/auth/logout
+Authorization: Bearer {{access}}
+
+### 11. 注销之后，那张**本来有效**的刷新令牌还能用吗
+### 期望：401 —— 这就是"可撤销"
+### ⚠️ 要与第 7 条对比看：同一个令牌在第 7 步能用，注销后不能用
+POST {{host}}/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refresh}}"
+}
+
+### 12. 公开接口，不需要令牌
+### 期望：200，且返回里**没有 password 字段**
+GET {{host}}/api/users/1
+
+### 13. 当前用户
+### 期望：200
+GET {{host}}/api/users/me
+Authorization: Bearer {{access}}
+
+### 14. 请求体不是合法 JSON
+### 期望：400，code=A0001
+### ⚠️ 这个是 4xx 不是 5xx——请求体格式是调用方的问题。曾经这里错误地返回 500
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{这不是合法JSON
+
+### 15. 限流：连续跑这个请求 11 次以上
+### 期望：前 10 次 401（账号密码错），第 11 次起 429
+### ⚠️ 前 10 次返回 401 而不是 429 才是关键——证明阈值内确实放行
+###    （一个永远返回 429 的系统也能"通过"限流测试）
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "rate_limit_probe",
+  "password": "not-the-real-password"
+}

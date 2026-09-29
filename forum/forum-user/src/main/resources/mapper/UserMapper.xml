@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wingtisky.forum.forum.user.mapper.UserMapper">
+
+    <!-- resultType 写全限定名而不是短名：短名依赖 type-aliases-package 配置，
+         而那个配置是全局的、新增模块时要改别处。全限定名无歧义，且可以直接
+         grep 到所有引用点。 -->
+    <sql id="Base_Column_List">
+        id, username, password, nickname, avatar, email, status, create_time, update_time, deleted
+    </sql>
+
+    <!-- useGeneratedKeys + keyProperty：把自增主键回填到入参对象的 id 上。
+         少了它 user.getId() 会是 null——而注册流程紧接着要用这个 id 建角色关联，
+         表现为"角色关联插入了 null"。 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO t_user (username, password, nickname, avatar, email, status)
+        VALUES (#{username}, #{password}, #{nickname}, #{avatar}, #{email}, #{status})
+    </insert>
+
+    <select id="selectById" resultType="com.wingtisky.forum.forum.user.entity.User">
+        SELECT <include refid="Base_Column_List"/>
+        FROM t_user
+        WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByUsername" resultType="com.wingtisky.forum.forum.user.entity.User">
+        SELECT <include refid="Base_Column_List"/>
+        FROM t_user
+        WHERE username = #{username} AND deleted = 0
+    </select>
+
+    <!-- 只更新资料字段。username / password / status 不在这里改：
+         改密码要单独走一条路径（并且要校验旧密码），改状态是管理员操作。
+         把它们混进这个"通用更新"里，迟早会有人拿它做不该做的事。 -->
+    <update id="updateProfile">
+        UPDATE t_user
+        <set>
+            <if test="nickname != null">nickname = #{nickname},</if>
+            <if test="avatar != null">avatar = #{avatar},</if>
+            <if test="email != null">email = #{email},</if>
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <select id="selectRoleCodesByUserId" resultType="java.lang.String">
+        SELECT r.code
+        FROM t_user_role ur
+                 JOIN t_role r ON r.id = ur.role_id
+        WHERE ur.user_id = #{userId}
+    </select>
+
+</mapper>

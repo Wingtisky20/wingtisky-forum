@@ -220,3 +220,177 @@ mvn -q -B compile dependency:resolve dependency:resolve-plugins
 **顺带发现的一处本地残留**：本机仓库 `com/wingtisky/` 下还留着**旧架构的模块**（`forum-module-user` / `forum-module-content` / `forum-infra` 等，来自已删除的 9 模块骨架）。它们不影响构建（新 POM 不再引用这些坐标），但是**陈旧状态**——留着会让人误以为还有这些模块。
 
 **耗时**：约 15 分钟（含本地复现）
+
+---
+
+## 2026-09-29 · 建表时中文被写坏（mysql 客户端默认 GBK）
+
+**现象**：建表脚本执行成功、退出码 0，但数据是坏的——
+
+```
+MODERATOR  版主  →  9 字节（应为 6 字节），乱码
+USER       普通用户 →  hex 里出现 3F 3F，也就是两个问号
+```
+
+**根因**：Windows 上 `mysql` 客户端的 `character_set_client` 默认是 **gbk**，而 `.sql` 文件是 **UTF-8**。客户端把 UTF-8 字节按 GBK 解释，转不过去的字符被替换成 `?`。
+
+**关键点：`?` 是不可逆的**——不是显示问题，是数据真的坏了。而且**脚本退出码是 0，没有任何报错**。
+
+**解决**：客户端加 `--default-character-set=utf8mb4`：
+
+```bash
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum < db/V1__init_user.sql
+```
+
+**验证方式**（不要靠肉眼看终端，会骗你）——查真实字节：
+
+```sql
+SELECT code, name, HEX(name), CHAR_LENGTH(name) AS chars, LENGTH(name) AS bytes FROM t_role;
+-- 版主 → E78988E4B8BB / 2 字 / 6 字节（每个汉字 3 字节）
+```
+
+**耗时**：约 10 分钟
+
+---
+
+## 2026-09-29 · 应用启动失败：Unsupported character encoding 'utf8mb4'
+
+**现象**：应用启动时 HikariCP 建连失败：
+
+```
+Caused by: java.io.UnsupportedEncodingException: utf8mb4
+Caused by: com.mysql.cj.exceptions.WrongArgumentException: Unsupported character encoding 'utf8mb4'
+```
+
+**根因**：JDBC URL 里的 `characterEncoding` 要的是 **Java 的字符集名**，而 `utf8mb4` 是 **MySQL 的**叫法。两者不是一回事。
+
+**解决**：写 `characterEncoding=UTF-8`。Connector/J 8+ 收到 UTF-8 后会自行协商成 MySQL 侧的 utf8mb4，**不需要也不应该**写 utf8mb4。
+
+> 顺带说明：这与上一条是**两个不同层面**的编码问题——上一条是客户端 ↔ 服务端，这一条是 JDBC 驱动的参数解析。同一个"utf8mb4"，在两个地方的含义不同。
+
+---
+
+## 2026-09-29 · Maven `provided` 作用域的前提是"运行时真的有人提供"
+
+**现象**：编译通过、单元测试全绿，但应用一启动就崩：
+
+```
+Caused by: java.lang.NoClassDefFoundError: org/springframework/security/access/AccessDeniedException
+  → Failed to introspect Class [GlobalExceptionHandler]
+```
+
+**根因**：把 `spring-security-core` 标成了 `provided`，意思是"编译需要、运行时由别人提供"。**但当时没人提供它**——Spring Security 要到 Task 4 才引入。于是运行时的类加载器找不到那个类，组件扫描在反射 `GlobalExceptionHandler` 的方法签名时直接失败。
+
+**为什么编译期和单测都发现不了**：编译只需要 API 在 classpath 上（provided 提供）；单测用的是 MockMvc standalone，**根本不扫组件**。只有**真启动一次**才暴露。
+
+**解决**：改成 `compile` 作用域。
+
+**教训**：`provided` 不是"我觉得运行时会有"，而是"**我确认运行时有**"。
+- `spring-boot-starter-web` 标 provided 成立——`app` 模块自己引了它
+- `spring-security-core` 标 provided 不成立——当时无人提供
+
+**这也解释了项目为什么把"接入后第一关是启动验证"写进 spec §9 闸门 5**：编译能过、测试能过、启动崩掉，是三个独立的关卡。
+
+---
+
+## 2026-09-29 · `.env` 里的 `&` 不加引号会被 shell 吃掉
+
+**现象**：JDBC URL 明明写在 `.env` 里，应用却拿到了空值（用了默认值，而默认值里恰好有另一个 bug，于是排查方向一度被带偏）。
+
+**根因**：`.env` 里的值若不加引号，`set -a && source .env` 会把 `&` 当成 shell 的**后台运算符**：
+
+```bash
+DB_URL=jdbc:mysql://...?useSSL=false&allowPublicKeyRetrieval=true
+#                                     ↑ 这里被当成 & 运算符
+```
+
+**解决**：含特殊字符的值一律加引号。
+
+```bash
+DB_URL="jdbc:mysql://...?useSSL=false&allowPublicKeyRetrieval=true&..."
+```
+
+**验证**：`set -a; . ./.env; set +a; echo ${#DB_URL}` → 应输出完整长度（本项目为 138），空值或过短说明被截断了。
+
+---
+
+## 2026-09-29 · Maven 的 `-D` 覆盖不动 POM 里写死的字面量
+
+**现象**：想临时跑被排除的测试，命令行传了 `-DexcludedGroups=__none__`，
+结果**一个测试都没跑，却显示 `BUILD SUCCESS`**——没有任何报错提示"你的参数没生效"。
+
+**根因**：Maven 的用户属性（`-D`）**只在 POM 用 `${...}` 表达式时才覆盖得动**。
+POM 里写死 `<excludedGroups>integration</excludedGroups>` 时，这个字面量赢，
+命令行参数被静默忽略。
+
+**解决**：把值抽成属性，POM 里写表达式：
+
+```xml
+<properties>
+    <excluded.groups>integration</excluded.groups>
+</properties>
+...
+<configuration>
+    <excludedGroups>${excluded.groups}</excludedGroups>
+</configuration>
+```
+
+之后 `-Dexcluded.groups=__none__` 才生效。
+
+**为什么这条危险**：它的失败模式是**静默的成功**——构建绿、没有报错、
+你以为测试跑了。同类问题还包括"以为改了配置，其实没改"。
+**判断依据是"测试数对不对"，不是"构建绿不绿"。**
+
+---
+
+## 2026-09-29 · `-am` 缺失导致的"本地仓库陈旧"第三次咬人
+
+**现象**：集成测试一跑就 `NoClassDefFoundError: com/wingtisky/forum/common/result/ErrorCode`——
+而那个类明明就在 `wt-common` 里，且刚刚编译通过。
+
+**根因**：`mvn -pl app test` **没带 `-am`**。这种情况下 Maven 不从 reactor 构建上游模块，
+而是去**本地仓库**找 `wt-common:1.0.0-SNAPSHOT`——而本地仓库里装的是**改动之前的旧版本**，
+里面没有 `ErrorCode`。
+
+**这是同一个根因的第三次**：
+1. CI 首跑时 `check-deps.sh` 失败（内部模块坐标只由 reactor 提供）
+2. `mvn -pl app dependency:tree` 显示的是旧版 wt-infra 的依赖树
+3. 本次
+
+**已经固化成一条规则**：**凡是对单个模块执行 `-pl <module>`，一律同时带上 `-am`。**
+不是"需要时才加"——本地仓库里有旧版本时，不加就会静默地用错东西。
+
+---
+
+## 2026-09-29 · 日志里的中文 grep 不到（平台默认编码是 GBK）
+
+**现象**：验证限流降级时，日志里明明打了 15 条 `ERROR 限流降级：Redis 不可用`，
+但 `grep '限流降级' /tmp/app.log` 返回 **0 条**。一度被误导成"降级分支根本没执行"，
+差点去改一个本来正确的实现。
+
+**根因**：Java 17 在中文 Windows 上，控制台输出按**平台默认编码**（GBK）写。
+而排查时用的是 UTF-8 的匹配模式，两边对不上。
+
+**这条的危害不是"日志有乱码"，而是"它让人以为某段代码没执行"**——
+一个正在生效的降级机制看起来像没生效，排查方向直接被带偏。
+
+**解决**：
+
+```yaml
+logging:
+  charset:
+    console: UTF-8
+```
+
+交互式终端若因此显示乱码，执行 `chcp 65001` 切到 UTF-8 代码页。
+
+**验证**：修复前 `grep -c '限流降级'` → 0；修复后重启触发限流，
+`grep -o '触发限流[^,]*'` → `触发限流: path=/api/auth/login`。
+
+**快速判断当前日志是什么编码**（不改配置时的临时手段）：
+
+```bash
+grep "某个英文类名" app.log | od -c | head    # 看中文那几个字节是 0xB4 开头(GBK)还是 0xE4 开头(UTF-8)
+```
+
+**耗时**：约 15 分钟（其中大半花在怀疑"代码是不是没跑到"上）

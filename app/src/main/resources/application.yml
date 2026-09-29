@@ -1,0 +1,120 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: wingtisky-forum
+
+  # ------------------------------------------------------------
+  # 数据源
+  #
+  # 密码走环境变量且**没有默认值**：缺失时应用启动即失败，好过悄悄用一个
+  # 可能不对的默认值连上去。这类"失败要失败得早且明显"的取舍，比"尽量能跑起来"
+  # 更省排查时间。
+  # ------------------------------------------------------------
+  datasource:
+    # 三个参数都不是随手加的，各有各的坑：
+    #
+    # · characterEncoding=**UTF-8，不是 utf8mb4**
+    #   这个参数要的是 **Java 的字符集名**，而 utf8mb4 是 MySQL 的叫法。写 utf8mb4 会直接
+    #   报 "Unsupported character encoding 'utf8mb4'" 启动失败。Connector/J 8+ 收到 UTF-8
+    #   后会自行协商成 MySQL 侧的 utf8mb4 排序规则，不需要也不应该写 utf8mb4。
+    #
+    # · allowPublicKeyRetrieval=true
+    #   MySQL 8 默认用 caching_sha2_password 认证插件，非 SSL 连接下首次认证需要向服务端
+    #   索取公钥；不加会报 "Public Key Retrieval is not allowed"。
+    #
+    # · useSSL=false
+    #   仅本地开发。生产必须开启 TLS（见 docs/06-runbook/local-setup.md §9）。
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/wingtisky_forum?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8}
+    username: ${DB_USERNAME:wingtisky}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: WtHikariPool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      # 3 秒。默认 30 秒会让"数据库连不上"表现为接口卡住半分钟，
+      # 而不是立刻返回错误——排查时很难判断到底是哪里慢。
+      connection-timeout: 3000
+
+  # ------------------------------------------------------------
+  # Redis
+  #
+  # M1 有两处用它：刷新令牌的可撤销记录（认证）、限流计数（亮点 5）。
+  # 都只在需要时才连，因此本机没起 Redis 时，只要不碰这两个功能应用仍能启动。
+  # ------------------------------------------------------------
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      # 1 秒。默认值偏长，而 Redis 不可用时限流与令牌刷新都会卡住——
+      # 快速失败并走降级路径，比让请求挂在那里好。
+      timeout: 1s
+
+# ------------------------------------------------------------
+# JWT
+#
+# 这是"策略"不是"机制"，所以配置在业务侧而不是 wt-infra（architecture.md §4.3）。
+# secret 来自环境变量、**没有默认值**：缺失即启动失败，好过用一个写死的默认密钥
+# 悄悄跑起来——那等于所有人都能伪造令牌。
+# ------------------------------------------------------------
+wt:
+  jwt:
+    secret: ${JWT_SECRET}
+    access-ttl: 30m
+    refresh-ttl: 7d
+
+  # ------------------------------------------------------------
+  # 限流（亮点 5）
+  #
+  # ⚠️ 规则是**按顺序匹配、第一条命中生效**，因此具体路径必须排在通配前面——
+  #    把 /api/** 放前面的话，登录接口就拿不到它自己的严格阈值了。
+  #
+  # ⚠️ 下面这些数字是**初始值**，M10 压测时校准。现在写死一个"看起来合理"的
+  #    数字没有依据，所以放进配置，改的时候不用重新编译。
+  # ------------------------------------------------------------
+  rate-limit:
+    enabled: true
+    rules:
+      # 登录与注册：按 IP 限。fallback 用 local 而不是 open——
+      # 这类限流的**唯一目的就是防撞库**，Redis 挂了就全放行等于在最需要它的时候把门打开
+      - path: /api/auth/login
+        dimension: ip
+        limit: 10
+        window: 1m
+        fallback: local
+      - path: /api/auth/register
+        dimension: ip
+        limit: 10
+        window: 1m
+        fallback: local
+
+      # 普通接口：按登录用户限。不用 IP 是因为同一个办公室共用一个出口 IP，
+      # 按 IP 限会把无辜的人一起限掉。未登录时自动退回 IP。
+      - path: /api/**
+        dimension: user
+        limit: 100
+        window: 1m
+        fallback: open
+
+mybatis:
+  # classpath*: 前缀支持从多个 jar 中加载 mapper XML（M2 之后会有多个模块各带自己的 XML）
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    # user_name → userName 自动映射。不开启的话每个下划线字段都要手写 resultMap，
+    # 而漏掉一个的后果是那个字段**静默为 null**——不会报错，只是数据不对。
+    map-underscore-to-camel-case: true
+
+logging:
+  charset:
+    # ⚠️ 必须显式指定。不写的话日志用**平台默认编码**——中文 Windows 上是 GBK，
+    # 于是日志里的中文既 grep 不到、重定向出来看也是乱码。实测踩过：限流降级明明
+    # 打了 15 条 ERROR，`grep 限流降级` 却是 0 条，一度被误导成"这里根本没打日志"。
+    # UTF-8 也是 Linux/CI 的默认值，统一之后各处一致。
+    # 交互式终端若显示乱码，执行 chcp 65001 切到 UTF-8 代码页即可。
+    console: UTF-8
+  pattern:
+    # %X{traceId:-} 从 MDC 取 traceId，取不到时留空（:- 是默认值语法）。
+    # 这一行是 TraceIdFilter 真正发挥价值的地方——没有它，traceId 只是个摆设。
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"
