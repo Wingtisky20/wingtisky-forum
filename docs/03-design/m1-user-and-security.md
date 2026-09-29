@@ -244,11 +244,15 @@ M1 用 **Spring MVC 的 `HandlerInterceptor`**（或 `OncePerRequestFilter`）�
 ### 6.1 统一响应体
 
 ```java
-Result<T> { int code; String message; T data; String traceId; }
+Result<T> { String code; String message; T data; String traceId; }
 ```
 
-- 成功 `code = 0`；失败用业务错误码
+- 成功 `code = "0"`；失败用业务错误码
 - `traceId` 回给前端，便于用户报错时定位日志
+
+> **`code` 用 `String` 而不是 `int`**（本节初稿写的是 `int`，与 §6.2 的 `A0001` 分段格式冲突，已修正）：
+> 带字母前缀的分段码**可读、可 grep**——排查线上问题时 `grep 'A01'` 就能捞出用户域的全部报错，
+> 而纯数字做不到这一点。前端做 `switch` 比较字符串与比较整数没有差别。
 
 ### 6.2 错误码
 
