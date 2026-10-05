@@ -89,8 +89,19 @@
 
 **索引**：
 - `KEY idx_author_create (author_id, create_time)` —— 个人主页"他的帖子"、按时间倒序
-- `KEY idx_create_time (create_time)` —— 首页最新
-- `KEY idx_status_top_create (status, top_flag DESC, create_time DESC)` —— 列表页主查询
+- `KEY idx_status_top_create (deleted, status, top_flag, create_time)` —— 列表页主查询
+
+> **⚠️ 2026-10-05 更正（写建表脚本时改了本行的两处）**：
+> 1. **去掉 `DESC`**——列表页的 `ORDER BY top_flag DESC, create_time DESC` **两列同向**，
+>    一个纯升序索引**反向扫描**就能满足，写 `DESC` 是多余的。
+> 2. **把 `deleted` 提到最前**——列表查询的过滤条件恒为 `deleted = 0 AND status = 0`，
+>    两个都是等值条件。**都放进索引，"过滤 + 排序"才能全靠索引完成、不必回表**；
+>    `deleted` 不进索引的话，每读一行都要回表检查它——而"少回表"正是 M6 要讲的那件事。
+> 3. 删掉了原来列的 `KEY idx_create_time (create_time)`：它与 `idx_status_top_create`
+>    的后缀高度重合，而列表查询**永远带 `deleted = 0 AND status = 0`**，
+>    单独一条 `create_time` 索引基本用不上——**多一条索引就多一份写入成本**。
+>
+> 三处都已同步到 `db/V2__init_content.sql`，两份文档不再有分歧。
 
 #### 为什么 `status` 和 `deleted` 要分开
 
