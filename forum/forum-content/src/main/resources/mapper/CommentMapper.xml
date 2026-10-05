@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wingtisky.forum.forum.content.mapper.CommentMapper">
+
+    <!-- 三处查询共用的列。不含 deleted：这个字段出不到外面去。 -->
+    <sql id="Comment_Columns">
+        id, post_id, author_id, parent_id, root_id, content, create_time
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO t_comment (post_id, author_id, parent_id, root_id, content)
+        VALUES (#{postId}, #{authorId}, #{parentId}, #{rootId}, #{content})
+    </insert>
+
+    <select id="selectById" resultType="com.wingtisky.forum.forum.content.entity.Comment">
+        SELECT <include refid="Comment_Columns"/>
+        FROM t_comment
+        WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <!-- 顶层评论分页。`root_id = 0` 这个条件能直接用上 idx_post_root
+         （(post_id, root_id, id)）——**这正是当初设 root_id 的目的**（ADR-0018）：
+         没有它，"哪些是顶层"就得递归判断，分页无从谈起。
+         最新的排前面，与"回复按时间正序"是有意的区别：进来先看到最新讨论，
+         但展开某一楼时顺着读。 -->
+    <select id="selectTopLevelPage" resultType="com.wingtisky.forum.forum.content.entity.Comment">
+        SELECT <include refid="Comment_Columns"/>
+        FROM t_comment
+        WHERE post_id = #{postId}
+          AND root_id = 0
+          AND deleted = 0
+        ORDER BY id DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="countTopLevel" resultType="long">
+        SELECT COUNT(*)
+        FROM t_comment
+        WHERE post_id = #{postId}
+          AND root_id = 0
+          AND deleted = 0
+    </select>
+
+    <!-- 一次取回多个楼的全部回复。**这是替代 N+1 的那一条查询**——
+         写成"每层楼查一次"，一条 100 楼的帖子就是 100 次查询。 -->
+    <select id="selectRepliesByRootIds" resultType="com.wingtisky.forum.forum.content.entity.Comment">
+        SELECT <include refid="Comment_Columns"/>
+        FROM t_comment
+        WHERE deleted = 0
+          AND root_id IN
+        <foreach collection="rootIds" item="rootId" open="(" separator="," close=")">
+            #{rootId}
+        </foreach>
+        ORDER BY id
+    </select>
+
+    <update id="softDelete">
+        UPDATE t_comment
+        SET deleted = 1
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- 连带删除：删一条顶层评论时，它下面的回复一并标记删除。
+         为什么连带（而不是把回复留成孤儿）：回复脱离上下文后读不通——
+         "他在回复什么？"——而且连带删除让**显示与计数天然一致**，
+         不必为"父评论已删"多写一层查询分支。 -->
+    <update id="softDeleteReplies">
+        UPDATE t_comment
+        SET deleted = 1
+        WHERE root_id = #{rootId} AND deleted = 0
+    </update>
+
+</mapper>

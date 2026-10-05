@@ -70,6 +70,17 @@ public interface PostMapper {
                       @Param("content") String content,
                       @Param("summary") String summary);
 
+    /**
+     * 调整帖子的评论数。
+     *
+     * <p>发评论时 {@code delta = 1}，删评论时传**负数**（连带删掉的回复要一起算）。
+     *
+     * <p>用 {@code GREATEST(comment_count + ?, 0)} 而不是直接加：万一计数因为
+     * 某次异常偏小了，减法会把评论数变成负数——**负数出现在界面上比数字偏小更难解释**。
+     * 这是单条语句，并发安全。
+     */
+    int addCommentCount(@Param("postId") Long postId, @Param("delta") int delta);
+
     /** 逻辑删除（标记 {@code deleted = 1}）。**不是真的删行**——见 V2 建表脚本的说明。 */
     int softDelete(Long id);
 

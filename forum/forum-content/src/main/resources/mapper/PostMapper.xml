@@ -83,6 +83,15 @@
         WHERE id = #{id} AND deleted = 0
     </update>
 
+    <!-- 评论数增减。delta 可能是负数（删评论）。
+         GREATEST(..., 0) 是下限保护：计数一旦变成负数，界面上是个没法解释的数字，
+         而且排查时很难判断它从哪来。 -->
+    <update id="addCommentCount">
+        UPDATE t_post
+        SET comment_count = GREATEST(comment_count + #{delta}, 0)
+        WHERE id = #{postId} AND deleted = 0
+    </update>
+
     <update id="softDelete">
         UPDATE t_post
         SET deleted = 1
