@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wingtisky.forum.forum.content.mapper.PostMapper">
+
+    <!-- 列表用的列。**注意这里没有 content**：
+         正文是 MEDIUMTEXT，列表页永远不读它——这是 M6 那个"大字段拖慢分页"
+         的性能优化能够成立的前提。想加 content 进来之前，先回去看设计稿 §2.6。
+         另外也刻意不写 SELECT *：它会把 content 一起捞出来，让这条约束失效。 -->
+    <sql id="List_Columns">
+        id, author_id, title, summary, status, top_flag, featured_flag,
+        view_count, like_count, comment_count, collect_count, create_time
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO t_post (author_id, title, content, summary)
+        VALUES (#{authorId}, #{title}, #{content}, #{summary})
+    </insert>
+
+    <select id="selectById" resultType="com.wingtisky.forum.forum.content.entity.Post">
+        SELECT id, author_id, title, content, summary, status, top_flag, featured_flag,
+               view_count, like_count, comment_count, collect_count, create_time, update_time
+        FROM t_post
+        WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <!-- ============================================================
+         列表查询。两个排序分支都**写死在 SQL 里**，不用 ${} 拼列名——
+         拼接意味着外部传进来的字符串会成为 SQL 的一部分，那是注入入口。
+
+         ORDER BY 末尾的 `id DESC` 不是多余的：create_time 只精确到秒，
+         同一秒发的帖子排序会不稳定——翻页时同一行可能在两页都出现、
+         或者一页都没出现。加一个唯一的列兜底，顺序才是确定的。
+         （M6 的 keyset 分页会把这个"兜底列"变成主角，那时再看这段。）
+         ============================================================ -->
+    <select id="selectPage" resultType="com.wingtisky.forum.forum.content.entity.Post">
+        SELECT <include refid="List_Columns"/>
+        FROM t_post
+        WHERE deleted = 0 AND status = 0
+        <choose>
+            <!-- 最热。⚠️ 这里有个**表达式**（几个计数相乘相加），MySQL 用不了索引，
+                 必然走 filesort。这是**已知的现状，不是遗漏**——M6 会拿它做对照，
+                 用真实数据与 EXPLAIN 来决定怎么优化（设计稿 §10 的 ⑩）。 -->
+            <when test="sort == 'HOT'">
+                ORDER BY top_flag DESC,
+                         (comment_count * 3 + like_count * 2 + collect_count) DESC,
+                         id DESC
+            </when>
+            <otherwise>
+                ORDER BY top_flag DESC, create_time DESC, id DESC
+            </otherwise>
+        </choose>
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="countPublished" resultType="long">
+        SELECT COUNT(*)
+        FROM t_post
+        WHERE deleted = 0 AND status = 0
+    </select>
+
+    <update id="updateContent">
+        UPDATE t_post
+        SET title   = #{title},
+            content = #{content},
+            summary = #{summary}
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE t_post
+        SET deleted = 1
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- view_count = view_count + 1 是**单条语句**，并发安全；
+         换成"先查再写"就会丢更新。 -->
+    <update id="incrementViewCount">
+        UPDATE t_post
+        SET view_count = view_count + 1
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+</mapper>
