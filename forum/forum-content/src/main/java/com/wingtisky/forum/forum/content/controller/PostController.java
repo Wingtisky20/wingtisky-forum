@@ -55,7 +55,8 @@ public class PostController {
     @PostMapping("/posts")
     public Result<Long> create(@AuthenticationPrincipal Long userId,
                                @Valid @RequestBody CreatePostRequest request) {
-        return Result.success(postService.create(userId, request.title(), request.content()));
+        return Result.success(
+                postService.create(userId, request.title(), request.content(), request.tags()));
     }
 
     /**
@@ -69,8 +70,9 @@ public class PostController {
     public Result<PageResult<PostListItem>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) PostSort sort) {
-        return Result.success(postService.page(new PostQuery(page, size, sort)));
+            @RequestParam(required = false) PostSort sort,
+            @RequestParam(required = false) Long tagId) {
+        return Result.success(postService.page(new PostQuery(page, size, sort, tagId)));
     }
 
     /** 帖子详情。**公开接口**。注意它会顺手给浏览数 +1。 */
@@ -94,7 +96,7 @@ public class PostController {
     @PreAuthorize("@postAuthz.isOwner(#id)")
     public Result<Void> update(@PathVariable Long id,
                                @Valid @RequestBody UpdatePostRequest request) {
-        postService.update(id, request.title(), request.content());
+        postService.update(id, request.title(), request.content(), request.tags());
         return Result.success();
     }
 

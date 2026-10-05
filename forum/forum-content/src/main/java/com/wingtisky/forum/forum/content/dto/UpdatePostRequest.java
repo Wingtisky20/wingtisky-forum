@@ -3,6 +3,8 @@ package com.wingtisky.forum.forum.content.dto;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 /**
  * 改帖请求。**两个字段都是可选的**——{@code PATCH} 的语义就是"只改我给了的"。
  *
@@ -26,6 +28,15 @@ public record UpdatePostRequest(
 
         @Pattern(regexp = "(?s).*\\S.*", message = "正文不能只有空白")
         @Size(max = 100_000, message = "正文最多 10 万字")
-        String content
+        String content,
+
+        /**
+         * 新的标签列表。{@code null} 表示**不改标签**；给了就**整体替换**
+         * （与"改了正文、但标签不动"这种部分更新不冲突，因为两者的判据都是"给没给"）。
+         *
+         * <p>传空列表是合法的，表示"把这篇帖子的标签全去掉"——这和"不改"是两件事，
+         * 所以不能用"列表是否为空"来判断要不要处理。
+         */
+        List<String> tags
 ) {
 }

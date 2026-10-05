@@ -11,11 +11,12 @@ package com.wingtisky.forum.forum.content.dto;
  * <p>上限存在的理由很直接：不加的话，一个 {@code size=100000} 的请求
  * 就是一次免费的资源消耗——而它看起来完全合法。
  *
- * @param page 页码，**从 1 开始**。小于 1 会被夹到 1
- * @param size 每页条数。超出 {@link #MAX_SIZE} 会被夹到上限，小于 1 会被夹到 1
- * @param sort 排序方式。传 {@code null} 时按最新排
+ * @param page  页码，**从 1 开始**。小于 1 会被夹到 1
+ * @param size  每页条数。超出 {@link #MAX_SIZE} 会被夹到上限，小于 1 会被夹到 1
+ * @param sort  排序方式。传 {@code null} 时按最新排
+ * @param tagId 只看某个标签下的帖子。{@code null} 表示不按标签筛
  */
-public record PostQuery(int page, int size, PostSort sort) {
+public record PostQuery(int page, int size, PostSort sort, Long tagId) {
 
     /** 每页最多 50 条。 */
     public static final int MAX_SIZE = 50;
@@ -24,6 +25,17 @@ public record PostQuery(int page, int size, PostSort sort) {
         page = Math.max(page, 1);
         size = Math.min(Math.max(size, 1), MAX_SIZE);
         sort = sort == null ? PostSort.LATEST : sort;
+    }
+
+    /**
+     * 不筛标签时的便捷构造。
+     *
+     * <p>留着它是因为"首页 / 个人主页"这两个最常见的调用根本不关心标签——
+     * 让它们都写上第四个 {@code null} 参数，只会让 {@code null} 看起来
+     * 像某种必须传的东西。
+     */
+    public PostQuery(int page, int size, PostSort sort) {
+        this(page, size, sort, null);
     }
 
     /** 供 SQL 的 {@code LIMIT ? OFFSET ?} 用。 */

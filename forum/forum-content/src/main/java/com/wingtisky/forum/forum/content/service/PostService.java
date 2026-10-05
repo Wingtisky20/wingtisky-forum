@@ -11,6 +11,7 @@ import com.wingtisky.forum.forum.content.dto.PostQuery;
 import com.wingtisky.forum.forum.content.entity.Post;
 import com.wingtisky.forum.forum.content.mapper.PostMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
@@ -44,10 +45,14 @@ public class PostService {
 
     private final PostMapper postMapper;
     private final UserQueryService userQueryService;
+    private final TagService tagService;
 
-    public PostService(PostMapper postMapper, UserQueryService userQueryService) {
+    public PostService(PostMapper postMapper,
+                       UserQueryService userQueryService,
+                       TagService tagService) {
         this.postMapper = postMapper;
         this.userQueryService = userQueryService;
+        this.tagService = tagService;
     }
 
     /**
@@ -56,7 +61,8 @@ public class PostService {
      * <p>摘要在这里生成一次并落库，**列表页因此永远不用碰正文列**（设计稿 §2.6）。
      * 这和"计数冗余存表"是同一个思路：把代价花在写得少的那一侧。
      */
-    public Long create(Long authorId, String title, String content) {
+    @Transactional
+    public Long create(Long authorId, String title, String content, List<String> tags) {
         Post post = new Post();
         post.setAuthorId(authorId);
         post.setTitle(title);
@@ -64,6 +70,11 @@ public class PostService {
         post.setSummary(summarize(content));
 
         postMapper.insert(post);
+
+        // 标签与帖子必须一起成功：分开的话，中间断掉就会出现
+        // "帖子发了但没有标签"或者"标签指向一条不存在的帖子"
+        tagService.attachTags(post.getId(), tags);
+
         // insert 的 XML 配了 useGeneratedKeys，主键已经回填到 post 上
         return post.getId();
     }
@@ -100,13 +111,15 @@ public class PostService {
      * <p>{@code authorId} 为 {@code null} 表示全站列表，否则只取该作者的。
      */
     private PageResult<PostListItem> page(Long authorId, PostQuery query) {
-        long total = postMapper.countList(authorId);
+        // 筛选条件原样透给 SQL——**取数据与数总数带的是同一套条件**，
+        // 否则会出现"总数说有 5 条、实际只翻出 1 条"
+        long total = postMapper.countList(authorId, query.tagId());
         if (total == 0) {
             return PageResult.empty(query.page(), query.size());
         }
 
         List<Post> posts = postMapper.selectPage(
-                authorId, query.sort().name(), query.offset(), query.size());
+                authorId, query.tagId(), query.sort().name(), query.offset(), query.size());
         Map<Long, UserBrief> authors = findAuthors(posts);
 
         List<PostListItem> items = posts.stream()
@@ -149,29 +162,44 @@ public class PostService {
      *
      * <p>摘要只在正文变了时重算：标题改了不影响摘要。
      */
-    public void update(Long id, String title, String content) {
-        // 两个都没给的话，这条请求什么也不会改，却会返回成功——
+    @Transactional
+    public void update(Long id, String title, String content, List<String> tags) {
+        // 什么都没给的话，这条请求什么也不会改，却会返回成功——
         // 静默的"无操作成功"比报错更难查（与 UserService.updateProfile 同一处理）
-        if (title == null && content == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "至少要修改标题或正文中的一项");
+        if (title == null && content == null && tags == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "至少要修改标题、正文或标签中的一项");
         }
         if (postMapper.selectById(id) == null) {
             throw new BizException(ErrorCode.POST_NOT_FOUND);
         }
 
-        postMapper.updateContent(id, title, content,
-                content == null ? null : summarize(content));
+        if (title != null || content != null) {
+            postMapper.updateContent(id, title, content,
+                    content == null ? null : summarize(content));
+        }
+        if (tags != null) {
+            // 传了标签就整体替换；传空列表是"把标签全去掉"，与"不改"不是一回事
+            tagService.replaceTags(id, tags);
+        }
     }
 
     /**
      * 删帖。**是标记删除，不是真的删行**——历史数据（评论、点赞）都指着它，
      * 真删了它们就变成孤儿（V2 建表脚本里有说明）。
+     *
+     * <p><b>先摘标签，再标记删除。</b>标签的使用次数要减回去——不减的话，
+     * 标签页上会一直写着"12 篇"，点进去只有 9 篇，而且**不会自己恢复**。
+     *
+     * <p>顺带把"帖子不存在"的判断改成先查一次：一是摘标签本来就需要知道帖子在不在，
+     * 二是**防重复调用**——帖子已经标记删除后，再调一次不能把标签计数减第二遍。
      */
+    @Transactional
     public void delete(Long id) {
-        int affected = postMapper.softDelete(id);
-        if (affected == 0) {
+        if (postMapper.selectById(id) == null) {
             throw new BizException(ErrorCode.POST_NOT_FOUND);
         }
+        tagService.detachAll(id);
+        postMapper.softDelete(id);
     }
 
     /**

@@ -14,11 +14,24 @@
 
     <!-- 列表的筛选条件。**取数据和数总数共用这一段**——
          两边各写一遍的话，改了一处忘了另一处，表现是"总数说有 100 条、
-         翻到第 3 页就空了"，而这类不一致极难联想到是 SQL 写岔了。 -->
+         翻到第 3 页就空了"，而这类不一致极难联想到是 SQL 写岔了。
+
+         按标签筛用 EXISTS 而不是 JOIN：
+           · 现在只筛一个标签，JOIN 也不会重复（一篇帖子最多匹配一行）
+           · 但**只要将来支持"同时筛多个标签"，JOIN 就会让同一篇帖子出现多行**——
+             列表里同一篇帖子出现两次、总数也跟着偏大，而这两个现象
+             都很难让人联想到是 JOIN 的问题
+           EXISTS 是半连接语义："存在一条关联指向这个标签"，从写法上就不会重复。 -->
     <sql id="List_Filter">
         deleted = 0 AND status = 0
         <if test="authorId != null">
             AND author_id = #{authorId}
+        </if>
+        <if test="tagId != null">
+            AND EXISTS (SELECT 1
+                        FROM t_post_tag pt
+                        WHERE pt.post_id = t_post.id
+                          AND pt.tag_id = #{tagId})
         </if>
     </sql>
 

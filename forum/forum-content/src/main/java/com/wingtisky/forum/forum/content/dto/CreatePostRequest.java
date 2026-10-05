@@ -3,6 +3,8 @@ package com.wingtisky.forum.forum.content.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 /**
  * 发帖请求。
  *
@@ -26,6 +28,16 @@ public record CreatePostRequest(
 
         @NotBlank(message = "正文不能为空")
         @Size(max = 100_000, message = "正文最多 10 万字")
-        String content
+        String content,
+
+        /**
+         * 标签名。**可以为空或 {@code null}**——不带标签的帖子是允许的。
+         *
+         * <p>这里**没有**加校验注解：标签的长度、数量、去重规则都与数据库列长
+         * 绑在一起（{@code t_tag.name} 是 {@code varchar(32)}、单帖最多 5 个），
+         * 全部放在 {@code TagService.normalize} 一处。分两处写，
+         * 迟早出现"接口说可以、数据库说不行"。
+         */
+        List<String> tags
 ) {
 }

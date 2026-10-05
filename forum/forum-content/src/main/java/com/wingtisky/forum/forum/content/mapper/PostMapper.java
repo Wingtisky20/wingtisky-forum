@@ -36,12 +36,16 @@ public interface PostMapper {
      *                 是为了让"筛选条件"和"总数统计"共用同一段 SQL（见 XML 的
      *                 {@code List_Filter}）——两份各写一遍，迟早会不一致，
      *                 表现为"总数说有 100 条，翻到第 3 页就空了"
+     * @param tagId    **为 {@code null} 表示不按标签筛**。用 {@code EXISTS} 子查询
+     *                 而不是 {@code JOIN}：JOIN 在"同时筛多个标签"时会让同一篇帖子
+     *                 出现多行（列表重复、总数偏大），而 EXISTS 从写法上就没这个问题
      * @param sort     {@code "LATEST"} 或 {@code "HOT"}。
      *                 ⚠️ **它不会拼进 SQL**——XML 里用 {@code <choose>} 在两种写死的排法之间选，
      *                 所以外部传进来的值到不了 SQL 里（这是不用字符串拼 ORDER BY 的原因）
      * @param offset   跳过多少条，由 {@code PostQuery} 算好
      */
     List<Post> selectPage(@Param("authorId") Long authorId,
+                          @Param("tagId") Long tagId,
                           @Param("sort") String sort,
                           @Param("offset") int offset,
                           @Param("size") int size);
@@ -50,8 +54,9 @@ public interface PostMapper {
      * 与 {@link #selectPage} **同一套筛选条件**下的总数。分页要显示"共 N 条"。
      *
      * @param authorId 同 {@link #selectPage}，{@code null} 表示不按作者筛
+     * @param tagId    同 {@link #selectPage}，{@code null} 表示不按标签筛
      */
-    long countList(@Param("authorId") Long authorId);
+    long countList(@Param("authorId") Long authorId, @Param("tagId") Long tagId);
 
     /**
      * 改标题与正文（**部分更新**：传 {@code null} 的字段不动）。摘要跟着正文走。
