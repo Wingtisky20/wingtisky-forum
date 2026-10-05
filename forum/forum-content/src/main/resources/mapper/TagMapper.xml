@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wingtisky.forum.forum.content.mapper.TagMapper">
+
+    <!-- 按名字查。**不写 LOWER() 也不写 BINARY**：
+         比较大小写敏不敏感由列的排序规则决定，而 t_tag.name 用的是
+         utf8mb4 的默认排序规则（utf8mb4_0900_ai_ci，`ci` = 大小写不敏感）。
+         在这里自己加 LOWER() 反而会让 name 上的索引失效。
+         这条依赖是**实测过**的（见 db/V2__init_content.sql 的文件头）。 -->
+    <select id="selectByName" resultType="com.wingtisky.forum.forum.content.entity.Tag">
+        SELECT id, name, post_count, create_time
+        FROM t_tag
+        WHERE name = #{name}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO t_tag (name)
+        VALUES (#{name})
+    </insert>
+
+    <!-- 热门标签。按使用次数倒序——不过滤 post_count = 0 的标签：
+         刚建出来还没挂上帖子的标签是瞬间状态，为它加一个条件反而让
+         "为什么我刚建的标签不见了"变成一个需要解释的问题。 -->
+    <select id="selectTop" resultType="com.wingtisky.forum.forum.content.entity.Tag">
+        SELECT id, name, post_count, create_time
+        FROM t_tag
+        ORDER BY post_count DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="addPostCount">
+        UPDATE t_tag
+        SET post_count = GREATEST(post_count + #{delta}, 0)
+        WHERE id = #{tagId}
+    </update>
+
+    <insert id="insertPostTag">
+        INSERT INTO t_post_tag (post_id, tag_id)
+        VALUES (#{postId}, #{tagId})
+    </insert>
+
+    <select id="selectByPostId" resultType="com.wingtisky.forum.forum.content.entity.Tag">
+        SELECT t.id, t.name, t.post_count, t.create_time
+        FROM t_post_tag pt
+                 JOIN t_tag t ON t.id = pt.tag_id
+        WHERE pt.post_id = #{postId}
+    </select>
+
+    <delete id="deletePostTags">
+        DELETE FROM t_post_tag
+        WHERE post_id = #{postId}
+    </delete>
+
+</mapper>
