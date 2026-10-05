@@ -78,6 +78,8 @@ public class SecurityConfig {
                         // ⚠️ 只放行 GET：同一个 /api/posts 路径上的 POST（发帖）仍然要认证。
                         .requestMatchers(HttpMethod.GET, "/api/posts", "/api/posts/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/users/*/posts").permitAll()
+                        // 评论列表同样公开；发评论（POST 同一路径）与删评论仍要认证
+                        .requestMatchers(HttpMethod.GET, "/api/posts/*/comments").permitAll()
                         // 剩下的全部需要认证。**用 anyRequest().authenticated() 而不是
                         // 逐个列出要保护的路径**——漏列一个的后果是那个接口完全敞开，
                         // 而这种漏洞不会报错，只会静静存在。
