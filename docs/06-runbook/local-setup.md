@@ -79,6 +79,11 @@ mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum      < db/
 mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum_test < db/V1__init_user.sql
 ```
 
+> ⚠️ **`V1__` 这种命名看起来像 Flyway，但本项目没有引入 Flyway**（它不在技术栈白名单里）。
+> 文件只是按那个约定命名，**靠手工执行**。后续里程碑新增表时沿用 `V2__`、`V3__` 即可，
+> 别忘了**开发库和测试库都要执行**——只对开发库执行的话，集成测试会因为缺表而失败，
+> 而那个报错信息（"表不存在"）不会提示你去跑脚本。
+
 > ⚠️ **`--default-character-set=utf8mb4` 不能省。** Windows 上 mysql 客户端的默认字符集是
 > **gbk**，而脚本文件是 UTF-8。不加这个参数时：**脚本执行成功、退出码 0、没有任何报错**，
 > 但中文会被写坏（转不过去的字符变成 `?`，**不可恢复**）。

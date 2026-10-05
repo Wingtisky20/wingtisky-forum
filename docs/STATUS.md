@@ -18,7 +18,12 @@
 
 - `docs/00-charter/collaboration.md` —— 协作流程
 - `docs/03-design/architecture.md` —— 架构（**已大改，务必读**）
-- `docs/04-log/01-M0-项目启动与协作基建.md` —— M0 执行记录（含 M1 可直接用的验证命令）
+- `docs/04-log/02-M1-用户域与安全基座.md` —— **当前里程碑**的执行记录（含可直接复制的验证命令）
+- `docs/03-design/m1-user-and-security.md` —— M1 设计稿（**M2 会大量沿用它定下的模式**：DTO 分层、异常到错误码的映射、测试的写法）
+- `docs/06-runbook/local-setup.md` —— 环境怎么起（**M2 起 Redis 必须开着**，见下方"中间件当前状态"）
+
+> 上一份执行记录：[`docs/04-log/01-M0-项目启动与协作基建.md`](docs/04-log/01-M0-项目启动与协作基建.md)（M0 已完结，按需查阅）
+> M0 的实施计划：`docs/superpowers/plans/2026-09-13-m0-project-bootstrap.md`；M1 的：`docs/superpowers/plans/2026-09-29-m1-user-and-security.md`
 
 ---
 
@@ -180,9 +185,18 @@ app/                                        单进程启动模块（唯一 main�
 1. **限流的"按用户名"维度**（M1 有意留的缺口，见设计 §5.4）——M2 之后若仍不做，要标注为"决定不做"
 2. **`forum-content` 的库表**会引用 `t_user`，跨模块取用户信息要走 `wt-domain` 的契约，不得直接依赖 `forum-user`（ArchUnit 会拦）
 
-> **中间件当前状态**：ES 与 Kafka 已完成启动验证，**验证后已关闭**——按 architecture.md §6.2 的"按需启动"纪律，它们到 M3/M4/M5 才需要。启动用 `scripts/start-es.bat` / `scripts/start-kafka.bat`，装法见 `docs/06-runbook/local-setup.md`。
+> **中间件当前状态**（新对话开工前先看这一条）：
+>
+> | 中间件 | 现在 | M2 需要吗 |
+> |---|---|---|
+> | **MySQL 8.0.41** | Windows 服务，常驻运行 | ✅ 需要 |
+> | **Redis 5.0.14.1** | **已关闭**——**开发 M2 时必须先起来**，否则登录/刷新会失败（认证与限流都依赖它）；且 M2 要跑集成测试，集成测试也连它 | ✅ **必须** |
+> | ES 8.18.3 / Kafka 3.9.1 | 已关闭（M0 验证过能启动） | ❌ 用不到，M3/M4/M5 才要 |
+>
+> 启动 Redis：`cd /d/aaaSoftware/redis && ./redis-server.exe &`
+> 应用连库连 Redis 的凭据在 `.env`（**不入库**，加载方式见 `local-setup.md` §3.3）。
 
-> **`README.md` 还缺一节「本地运行」**：计划书原写"新建 README"，但仓库里已有一份（`76f71cf`，113 行）且内容更完整，故未改动。缺的那一节等中间件真能串起来（M1 能启动服务）再补——现在写只能是假的。
+> **`README.md` 还缺一节「本地运行」**：M1 结束时服务已经能起来了，**当初写的"等能跑起来再补"这个前提已经满足**——所以这一节现在是可以如实写的，只是还没写。M2 建前端工程时会一并补上。
 
 每个 Task 动手前必须先做 **Step 0：向用户说清「做什么 / 为什么现在做 / 几种做法与代价」，等回应才动手**。
 
