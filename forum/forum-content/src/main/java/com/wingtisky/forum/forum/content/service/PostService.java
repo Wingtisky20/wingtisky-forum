@@ -80,12 +80,33 @@ public class PostService {
      * </ol>
      */
     public PageResult<PostListItem> page(PostQuery query) {
-        long total = postMapper.countPublished();
+        return page(null, query);
+    }
+
+    /**
+     * 取某个人发的帖子（个人主页用）。筛选条件交给 {@code authorId}，
+     * SQL 与总数统计共用同一段（见 {@code PostMapper.xml} 的 {@code List_Filter}）。
+     */
+    public PageResult<PostListItem> pageByAuthor(Long authorId, PostQuery query) {
+        if (authorId == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "作者 ID 不能为空");
+        }
+        return page(authorId, query);
+    }
+
+    /**
+     * 两种列表共用的实现。
+     *
+     * <p>{@code authorId} 为 {@code null} 表示全站列表，否则只取该作者的。
+     */
+    private PageResult<PostListItem> page(Long authorId, PostQuery query) {
+        long total = postMapper.countList(authorId);
         if (total == 0) {
             return PageResult.empty(query.page(), query.size());
         }
 
-        List<Post> posts = postMapper.selectPage(query.sort().name(), query.offset(), query.size());
+        List<Post> posts = postMapper.selectPage(
+                authorId, query.sort().name(), query.offset(), query.size());
         Map<Long, UserBrief> authors = findAuthors(posts);
 
         List<PostListItem> items = posts.stream()
@@ -118,17 +139,28 @@ public class PostService {
     }
 
     /**
-     * 改标题与正文。
+     * 改标题与正文（**部分更新**：传 {@code null} 的字段不动）。
      *
-     * <p>用"受影响行数为 0"判断帖子不存在，**不必先查一次再改一次**。
-     * 摘要跟着正文一起更新——它是从正文派生的，不同步就会出现
-     * "列表里显示的是旧内容"这种很难一眼看出的错。
+     * <p><b>先查一次确认帖子存在，不能靠 UPDATE 的返回行数判断。</b>
+     * 这里的判断方式比 Task 3 初稿更保守，原因是初稿有 bug：
+     * MySQL 的 {@code UPDATE} 默认返回"**实际改变了的行数**"，
+     * 所以用户打开帖子、什么都没改、直接点保存时，返回是 0——
+     * 按初稿的写法会提示"帖子不存在"。多这一次查询换来的是不会误报。
+     *
+     * <p>摘要只在正文变了时重算：标题改了不影响摘要。
      */
     public void update(Long id, String title, String content) {
-        int affected = postMapper.updateContent(id, title, content, summarize(content));
-        if (affected == 0) {
+        // 两个都没给的话，这条请求什么也不会改，却会返回成功——
+        // 静默的"无操作成功"比报错更难查（与 UserService.updateProfile 同一处理）
+        if (title == null && content == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "至少要修改标题或正文中的一项");
+        }
+        if (postMapper.selectById(id) == null) {
             throw new BizException(ErrorCode.POST_NOT_FOUND);
         }
+
+        postMapper.updateContent(id, title, content,
+                content == null ? null : summarize(content));
     }
 
     /**

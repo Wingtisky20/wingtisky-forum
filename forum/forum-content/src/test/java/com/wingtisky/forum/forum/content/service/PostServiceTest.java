@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -147,8 +148,8 @@ class PostServiceTest {
         @Test
         @DisplayName("一页的作者一次批量查回来——不是每篇查一次")
         void shouldLoadAuthorsInOneBatch() {
-            when(postMapper.countPublished()).thenReturn(2L);
-            when(postMapper.selectPage("LATEST", 0, 20)).thenReturn(List.of(
+            when(postMapper.countList(null)).thenReturn(2L);
+            when(postMapper.selectPage(null, "LATEST", 0, 20)).thenReturn(List.of(
                     post(1L, 10L, "帖子一"),
                     post(2L, 20L, "帖子二")));
             when(userQueryService.findBriefs(Set.of(10L, 20L))).thenReturn(Map.of(
@@ -170,13 +171,13 @@ class PostServiceTest {
         @Test
         @DisplayName("一条帖子都没有时，连列表查询和作者查询都不发")
         void shouldShortCircuitWhenTotalIsZero() {
-            when(postMapper.countPublished()).thenReturn(0L);
+            when(postMapper.countList(null)).thenReturn(0L);
 
             PageResult<PostListItem> result = postService.page(new PostQuery(1, 20, PostSort.LATEST));
 
             assertThat(result.items()).isEmpty();
             assertThat(result.total()).isZero();
-            verify(postMapper, never()).selectPage(anyString(), anyInt(), anyInt());
+            verify(postMapper, never()).selectPage(any(), anyString(), anyInt(), anyInt());
             // 顺带避开一个坑：空集合的批量查询会拼出非法的 IN ()
             verifyNoInteractions(userQueryService);
         }
@@ -184,8 +185,8 @@ class PostServiceTest {
         @Test
         @DisplayName("作者已注销时 author 为 null，但这个条目仍然在列表里")
         void shouldKeepItemWhenAuthorIsGone() {
-            when(postMapper.countPublished()).thenReturn(1L);
-            when(postMapper.selectPage(anyString(), anyInt(), anyInt()))
+            when(postMapper.countList(null)).thenReturn(1L);
+            when(postMapper.selectPage(any(), anyString(), anyInt(), anyInt()))
                     .thenReturn(List.of(post(1L, 10L, "帖子")));
             when(userQueryService.findBriefs(any())).thenReturn(Map.of());
 
@@ -199,13 +200,43 @@ class PostServiceTest {
         @Test
         @DisplayName("排序参数原样传给 Mapper（真正的排法写死在 XML 里）")
         void shouldPassSortToMapper() {
-            when(postMapper.countPublished()).thenReturn(1L);
-            when(postMapper.selectPage("HOT", 0, 20)).thenReturn(List.of());
+            when(postMapper.countList(null)).thenReturn(1L);
+            when(postMapper.selectPage(null, "HOT", 0, 20)).thenReturn(List.of());
             when(userQueryService.findBriefs(any())).thenReturn(Map.of());
 
             postService.page(new PostQuery(1, 20, PostSort.HOT));
 
-            verify(postMapper).selectPage("HOT", 0, 20);
+            verify(postMapper).selectPage(null, "HOT", 0, 20);
+        }
+
+        @Test
+        @DisplayName("按作者筛：筛选条件传给 Mapper，总数也按同一条件算")
+        void shouldFilterByAuthor() {
+            when(postMapper.countList(10L)).thenReturn(1L);
+            when(postMapper.selectPage(10L, "LATEST", 0, 20))
+                    .thenReturn(List.of(post(1L, 10L, "他的帖子")));
+            when(userQueryService.findBriefs(any())).thenReturn(Map.of());
+
+            PageResult<PostListItem> result =
+                    postService.pageByAuthor(10L, new PostQuery(1, 20, PostSort.LATEST));
+
+            assertThat(result.total()).isEqualTo(1L);
+            assertThat(result.items()).hasSize(1);
+            // 取数据和数总数必须带同一个筛选条件——否就会出现
+            // "总数说有 5 条、实际只翻出 1 条"这种自相矛盾的响应
+            verify(postMapper).countList(10L);
+            verify(postMapper).selectPage(10L, "LATEST", 0, 20);
+        }
+
+        @Test
+        @DisplayName("作者 ID 为 null → A0101 参数不合法，且不查库")
+        void shouldRejectNullAuthorId() {
+            assertThatThrownBy(() -> postService.pageByAuthor(null, new PostQuery(1, 20, PostSort.LATEST)))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
+                            .isEqualTo(ErrorCode.PARAM_INVALID));
+
+            verifyNoInteractions(postMapper);
         }
     }
 
@@ -250,29 +281,61 @@ class PostServiceTest {
     class UpdateAndDelete {
 
         @Test
-        @DisplayName("改帖时摘要跟着正文一起更新")
-        void shouldUpdateSummaryTogetherWithContent() {
-            when(postMapper.updateContent(eq(1L), eq("新标题"), eq("新正文"), anyString()))
-                    .thenReturn(1);
+        @DisplayName("只改标题时，摘要传 null —— 不重算（摘要由正文派生）")
+        void shouldNotRecomputeSummaryWhenOnlyTitleChanges() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "旧标题"));
 
-            postService.update(1L, "新标题", "新正文");
+            postService.update(1L, "新标题", null);
 
-            ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
-            verify(postMapper).updateContent(eq(1L), eq("新标题"), eq("新正文"), summary.capture());
-            // 不一起更新的话，列表页会一直显示旧摘要——很难一眼看出是哪里错了
-            assertThat(summary.getValue()).isEqualTo("新正文");
+            verify(postMapper).updateContent(1L, "新标题", null, null);
         }
 
         @Test
-        @DisplayName("改一条不存在的帖子 → A0201")
+        @DisplayName("改正文时摘要跟着一起更新")
+        void shouldUpdateSummaryTogetherWithContent() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
+
+            postService.update(1L, null, "新的正文\n带换行");
+
+            ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
+            verify(postMapper).updateContent(eq(1L), isNull(), eq("新的正文\n带换行"), summary.capture());
+            // 不一起更新的话，列表页会一直显示旧摘要——很难一眼看出是哪里错了
+            assertThat(summary.getValue()).isEqualTo("新的正文 带换行");
+        }
+
+        @Test
+        @DisplayName("两个字段都不给 → A0101，而不是静默地什么都不做还返回成功")
+        void shouldRejectEmptyUpdate() {
+            assertThatThrownBy(() -> postService.update(1L, null, null))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
+                            .isEqualTo(ErrorCode.PARAM_INVALID));
+
+            verifyNoInteractions(postMapper);
+        }
+
+        @Test
+        @DisplayName("帖子不存在 → A0201（靠先查一次，不靠 UPDATE 的返回行数）")
         void shouldThrowWhenUpdatingMissingPost() {
-            when(postMapper.updateContent(anyLong(), anyString(), anyString(), anyString()))
-                    .thenReturn(0);
+            when(postMapper.selectById(999L)).thenReturn(null);
 
             assertThatThrownBy(() -> postService.update(999L, "t", "c"))
                     .isInstanceOf(BizException.class)
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
+        }
+
+        @Test
+        @DisplayName("回归：改成和原值一样的内容，不该被误判成『帖子不存在』")
+        void shouldNotMisreportMissingWhenNothingChanged() {
+            // 用户打开帖子、什么都不改、直接点保存——这是最常见的操作之一。
+            // 若用 UPDATE 的返回行数判断存在性，MySQL 返回的是 0（它数的是"改变了"的行数），
+            // 于是用户会看到"帖子不存在"。这里断言它不抛异常。
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "一模一样的标题"));
+
+            postService.update(1L, "一模一样的标题", null);
+
+            verify(postMapper).updateContent(1L, "一模一样的标题", null, null);
         }
 
         @Test

@@ -12,6 +12,16 @@
         view_count, like_count, comment_count, collect_count, create_time
     </sql>
 
+    <!-- 列表的筛选条件。**取数据和数总数共用这一段**——
+         两边各写一遍的话，改了一处忘了另一处，表现是"总数说有 100 条、
+         翻到第 3 页就空了"，而这类不一致极难联想到是 SQL 写岔了。 -->
+    <sql id="List_Filter">
+        deleted = 0 AND status = 0
+        <if test="authorId != null">
+            AND author_id = #{authorId}
+        </if>
+    </sql>
+
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO t_post (author_id, title, content, summary)
         VALUES (#{authorId}, #{title}, #{content}, #{summary})
@@ -36,7 +46,7 @@
     <select id="selectPage" resultType="com.wingtisky.forum.forum.content.entity.Post">
         SELECT <include refid="List_Columns"/>
         FROM t_post
-        WHERE deleted = 0 AND status = 0
+        WHERE <include refid="List_Filter"/>
         <choose>
             <!-- 最热。⚠️ 这里有个**表达式**（几个计数相乘相加），MySQL 用不了索引，
                  必然走 filesort。这是**已知的现状，不是遗漏**——M6 会拿它做对照，
@@ -53,17 +63,23 @@
         LIMIT #{size} OFFSET #{offset}
     </select>
 
-    <select id="countPublished" resultType="long">
+    <select id="countList" resultType="long">
         SELECT COUNT(*)
         FROM t_post
-        WHERE deleted = 0 AND status = 0
+        WHERE <include refid="List_Filter"/>
     </select>
 
+    <!-- 部分更新：传 null 的字段不动。
+         ⚠️ 注意 summary 挂在 content 这个分支里——**摘要由正文派生**，
+         只有正文变了才重算。放在外面的话，只改标题也会把摘要冲掉。
+         ⚠️ 两个字段都为 null 时，<set> 会生成空的 SET 子句、SQL 直接语法错误；
+         调用方（PostService.update）已在入口拦掉这种情况——与 UserMapper.updateProfile 同一处理。 -->
     <update id="updateContent">
         UPDATE t_post
-        SET title   = #{title},
-            content = #{content},
-            summary = #{summary}
+        <set>
+            <if test="title != null">title = #{title},</if>
+            <if test="content != null">content = #{content}, summary = #{summary},</if>
+        </set>
         WHERE id = #{id} AND deleted = 0
     </update>
 

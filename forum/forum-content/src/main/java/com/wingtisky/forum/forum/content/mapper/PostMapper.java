@@ -31,24 +31,39 @@ public interface PostMapper {
     /**
      * 取一页列表项。**不查正文列**（见 {@code PostMapper.xml} 的 {@code List_Columns}）。
      *
-     * @param sort   {@code "LATEST"} 或 {@code "HOT"}。
-     *               ⚠️ **它不会拼进 SQL**——XML 里用 {@code <choose>} 在两种写死的排法之间选，
-     *               所以外部传进来的值到不了 SQL 里（这是不用字符串拼 ORDER BY 的原因）
-     * @param offset 跳过多少条，由 {@code PostQuery} 算好
+     * @param authorId **为 {@code null} 表示不按作者筛**（首页）。传了值就是
+     *                 "某人的帖子"（个人主页）。用同一个方法加可选条件，
+     *                 是为了让"筛选条件"和"总数统计"共用同一段 SQL（见 XML 的
+     *                 {@code List_Filter}）——两份各写一遍，迟早会不一致，
+     *                 表现为"总数说有 100 条，翻到第 3 页就空了"
+     * @param sort     {@code "LATEST"} 或 {@code "HOT"}。
+     *                 ⚠️ **它不会拼进 SQL**——XML 里用 {@code <choose>} 在两种写死的排法之间选，
+     *                 所以外部传进来的值到不了 SQL 里（这是不用字符串拼 ORDER BY 的原因）
+     * @param offset   跳过多少条，由 {@code PostQuery} 算好
      */
-    List<Post> selectPage(@Param("sort") String sort,
+    List<Post> selectPage(@Param("authorId") Long authorId,
+                          @Param("sort") String sort,
                           @Param("offset") int offset,
                           @Param("size") int size);
 
-    /** 当前"正常可见"的帖子总数（未删、未下架）。分页要显示"共 N 条"。 */
-    long countPublished();
+    /**
+     * 与 {@link #selectPage} **同一套筛选条件**下的总数。分页要显示"共 N 条"。
+     *
+     * @param authorId 同 {@link #selectPage}，{@code null} 表示不按作者筛
+     */
+    long countList(@Param("authorId") Long authorId);
 
     /**
-     * 改标题与正文。摘要一并更新——**它是由正文派生的**，
-     * 改了正文却不改摘要，列表页就会一直显示旧内容。
+     * 改标题与正文（**部分更新**：传 {@code null} 的字段不动）。摘要跟着正文走。
      *
-     * <p>返回受影响行数，**调用方用它判断"帖子不存在"**（0 行就是没找到），
-     * 这样不必先查一次再改一次。
+     * <p><b>⚠️ 不要用返回的行数判断"帖子不存在"。</b>
+     * MySQL 的 {@code UPDATE} 默认返回的是"**实际改变了的行数**"，
+     * 不是"匹配到的行数"——所以把标题改成和原来一样的值，返回的是 0。
+     * 拿它当"没找到"，就会出现"用户打开帖子、什么都没改、点保存 → 提示帖子不存在"。
+     *
+     * <p>调用方应先 {@link #selectById} 确认存在，再调用本方法。
+     * （那个"返回值到底是改变数还是匹配数"还取决于 JDBC 驱动的 {@code useAffectedRows} 设置，
+     * 与其赌它，不如不去依赖它。）
      */
     int updateContent(@Param("id") Long id,
                       @Param("title") String title,
