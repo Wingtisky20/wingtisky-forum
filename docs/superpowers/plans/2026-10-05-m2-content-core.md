@@ -217,7 +217,13 @@ mvn -q -pl forum/forum-content -am test
 - Create: `controller/PostController.java`、`dto/` 下的请求与响应 DTO
 - Modify: `SecurityConfig`（公开接口加进 `PUBLIC_ENDPOINTS`）
 - Modify: `ErrorCode`（加 A02xx 段）
-- Modify: `application.yml`（限流规则补 M2 接口）
+- ~~Modify: `application.yml`（限流规则补 M2 接口）~~ **已挪到 Task 9**（见下）
+
+> **⚠️ 2026-10-05 更正（动手时发现的）**：本 Task 原计划"给发帖单独设限流阈值"，
+> **实际没做，挪到 Task 9（限流专项）**。原因具体：要正确做到这点，得让限流规则
+> **能区分 GET 与 POST**——规则目前**只按路径匹配**，给 `/api/posts` 设 10/分钟
+> 会把**公开的帖子列表**也一起限到 10/分钟，那比不做更糟。
+> Task 4 先用默认的 100/分钟；Task 9 补"按方法区分"的能力，再逐接口定阈值。
 
 **Interfaces:**
 - Produces: `POST /api/posts`、`GET /api/posts`、`GET /api/posts/{id}`、
