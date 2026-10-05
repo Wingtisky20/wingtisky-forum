@@ -7,16 +7,17 @@
 
 ## 当前阶段
 
-**M2 · 内容域核心 + 前端 —— 🔨 已开工（设计定稿，代码未开始）**
+**M2 · 内容域核心 + 前端 —— 🔨 进行中（Task 1 / 11 已完成）**
 
 | 已完成 | 证据 |
 |---|---|
 | M0 启动与协作基建 | tag `m0-done` |
 | M1 用户域与安全基座 | tag `m1-done`，已合并进 `main` |
-| **M2 设计稿定稿** | `docs/03-design/m2-content-core.md`（2026-10-05 决策定稿，10 个决策点见其 §10） |
-| **M2 实施计划已出** | `docs/superpowers/plans/2026-10-05-m2-content-core.md`（11 个 Task） |
+| M2 设计稿定稿 + 实施计划 | `docs/03-design/m2-content-core.md`、`docs/superpowers/plans/2026-10-05-m2-content-core.md` |
+| **M2 Task 1 · 跨域契约** | `wt-domain` 的 `UserBrief` / `UserQueryService` + `forum-user` 的实现与单测（`ac08540`~`258fae1`）；**ArchitectureTest 通过**，边界守住了 |
+| **M1 的六条链路讲解** | `docs/05-interview/`（2346 行）——补的是"机制建立之前"缺的那部分 |
 
-> **下一个动作 = 计划里的 Task 1**（在 `wt-domain` 建跨域契约）。
+> **下一个动作 = 计划里的 Task 2**（`db/V2__init_content.sql`，六张表）。
 > 动手前先做 **Step 0**（说清做什么 / 为什么现在做 / 几种做法与代价），等用户回应。
 
 ## 当前上下文文件
@@ -29,6 +30,8 @@
 - `docs/03-design/m2-content-core.md` —— **当前里程碑的设计稿**（库表 / 接口 / 决策结论，**动手前必读**）
 - `docs/superpowers/plans/2026-10-05-m2-content-core.md` —— **当前里程碑的实施计划**（11 个 Task，从 Task 1 开始）
 - `docs/03-design/m1-user-and-security.md` —— M1 设计稿（**M2 沿用其模式**：DTO 分层、异常到错误码的映射、归属校验 Bean、测试写法）
+- `docs/05-interview/` —— **六条链路讲解**（公共设施 / 注册登录 / 刷新注销 / 鉴权 / 限流 / 持久层）。
+  **接手时先读这里**：它比设计稿更贴近代码，能在动手前把现有链路摸清
 - `docs/06-runbook/local-setup.md` —— 环境怎么起（**M2 必须先把 Redis 起来**，见下方"中间件当前状态"）
 
 > 上一份执行记录：[`docs/04-log/02-M1-用户域与安全基座.md`](docs/04-log/02-M1-用户域与安全基座.md)（M1 已完结，含可直接复制的验证命令）
@@ -190,15 +193,15 @@ app/                                        单进程启动模块（唯一 main�
 
 ## 下一步
 
-**M2 · 内容域核心 + 前端** —— 设计已定稿、计划已出，**代码尚未开始**。
+**M2 · 内容域核心 + 前端** —— 进行中（**Task 1 / 11 已完成**）。
 预估 4 周（spec §6.2）。闸门：真实 HTTP 走通 `发帖 → 评论 → 列表`。
 
 **施工顺序**（详见 `docs/superpowers/plans/2026-10-05-m2-content-core.md`）：
 
 | Task | 内容 |
 |---|---|
-| 1 | `wt-domain` 跨域契约（`UserBrief` / `UserQueryService`）← **从这一步开始** |
-| 2 | `db/V2__init_content.sql`（六张表） |
+| 1 | ~~`wt-domain` 跨域契约~~ ✅ **已完成**（`ac08540`~`258fae1`） |
+| 2 | `db/V2__init_content.sql`（六张表）← **下一步** |
 | 3–4 | 帖子（领域 → 接口层） |
 | 5 | 评论（两级模型） |
 | 6 | 标签 |
@@ -208,9 +211,10 @@ app/                                        单进程启动模块（唯一 main�
 | 10 | 前端工程 + 4 个页面 |
 | 11 | 闸门验收 · README 补「本地运行」 · 写 M2 执行记录 · tag `m2-done` |
 
-> **⚠️ `bash tools/check-doc-refs.sh` 现在会报 1 处漂移**（`UserQueryService` 在代码中不存在）。
-> 这是**"设计稿先于代码"的必然状态**，不是遗漏——**Task 1 完成后即消失**。
-> CI 只在 `push: main` 与 `pull_request: main` 时触发，期间不阻塞。
+> **✅ `bash tools/check-doc-refs.sh` 已恢复通过**（Task 1 完成后实测）。
+> 之前那处漂移（`UserQueryService` 尚未创建）**按预告自行消失**——
+> 这既证明"设计稿先于代码"这个状态有终点，也证明这个检查确实盯着代码而不是摆设。
+> 本次同时把 `docs/05-interview` 加进了它的 `DOC_PATHS`，讲解文档也受闸门 6 保护。
 
 > **中间件当前状态**（新对话开工前先看这一条）：
 >
