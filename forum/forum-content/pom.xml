@@ -31,5 +31,16 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+
+    <!-- 测试。
+         本模块是 M2 之后业务规则最集中的地方（谁能改、删帖是标记还是真删、列表怎么批量补作者），
+         这些规则**都不会报错、只会悄悄做错**，所以必须有测试守。
+         用 compile 之外的作用域：它不会进最终产物。
+         （原本这里没有任何测试依赖，是 M2 Task 3 才补上的——写单测时才发现。） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>
