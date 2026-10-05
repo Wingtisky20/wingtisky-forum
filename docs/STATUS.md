@@ -7,18 +7,23 @@
 
 ## 当前阶段
 
-**M2 · 内容域核心 + 前端 —— 🔨 进行中（Task 1 / 11 已完成）**
+**M2 · 内容域核心 + 前端 —— 🔨 进行中（Task 3 / 11 已完成）**
 
 | 已完成 | 证据 |
 |---|---|
 | M0 启动与协作基建 | tag `m0-done` |
 | M1 用户域与安全基座 | tag `m1-done`，已合并进 `main` |
 | M2 设计稿定稿 + 实施计划 | `docs/03-design/m2-content-core.md`、`docs/superpowers/plans/2026-10-05-m2-content-core.md` |
-| **M2 Task 1 · 跨域契约** | `wt-domain` 的 `UserBrief` / `UserQueryService` + `forum-user` 的实现与单测（`ac08540`~`258fae1`）；**ArchitectureTest 通过**，边界守住了 |
+| **M2 Task 1 · 跨域契约** | `wt-domain` 的 `UserBrief` / `UserQueryService` + `forum-user` 的实现与单测（`ac08540`~`258fae1`）；**ArchitectureTest 通过** |
+| **M2 Task 2 · 建表脚本** | `db/V2__init_content.sql` 六张表，**开发库与测试库都已执行**（退出码 0/0），列与索引逐项核对过 |
+| **M2 Task 3 · 帖子领域** | 实体 + 手写 SQL 的 Mapper + `PostService` + 19 个单测（`2bd74d8`~`8a5736d`） |
 | **M1 的六条链路讲解** | `docs/05-interview/`（2346 行）——补的是"机制建立之前"缺的那部分 |
 
-> **下一个动作 = 计划里的 Task 2**（`db/V2__init_content.sql`，六张表）。
+> **下一个动作 = 计划里的 Task 4**（帖子接口层：Controller + 请求/响应 DTO + 参数校验）。
 > 动手前先做 **Step 0**（说清做什么 / 为什么现在做 / 几种做法与代价），等用户回应。
+>
+> ⚠️ **Task 4 做完，"帖子读写"这条链路才算完整**（浏览器真正调得到），
+> 那时按 `collaboration.md §2.6` 产出一份链路讲解。
 
 ## 当前上下文文件
 
@@ -193,7 +198,7 @@ app/                                        单进程启动模块（唯一 main�
 
 ## 下一步
 
-**M2 · 内容域核心 + 前端** —— 进行中（**Task 1 / 11 已完成**）。
+**M2 · 内容域核心 + 前端** —— 进行中（**Task 3 / 11 已完成**）。
 预估 4 周（spec §6.2）。闸门：真实 HTTP 走通 `发帖 → 评论 → 列表`。
 
 **施工顺序**（详见 `docs/superpowers/plans/2026-10-05-m2-content-core.md`）：
@@ -201,8 +206,9 @@ app/                                        单进程启动模块（唯一 main�
 | Task | 内容 |
 |---|---|
 | 1 | ~~`wt-domain` 跨域契约~~ ✅ **已完成**（`ac08540`~`258fae1`） |
-| 2 | `db/V2__init_content.sql`（六张表）← **下一步** |
-| 3–4 | 帖子（领域 → 接口层） |
+| 2 | ~~`db/V2__init_content.sql`（六张表）~~ ✅ **已完成**（`c72738c`） |
+| 3 | ~~帖子领域（实体 / Mapper / Service）~~ ✅ **已完成**（`2bd74d8`~`8a5736d`） |
+| 4 | 帖子接口层（Controller / DTO / 参数校验）← **下一步**；做完要出链路讲解 |
 | 5 | 评论（两级模型） |
 | 6 | 标签 |
 | 7 | 点赞与收藏 |
