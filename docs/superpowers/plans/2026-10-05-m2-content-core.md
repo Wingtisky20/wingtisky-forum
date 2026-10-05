@@ -36,6 +36,10 @@
   **等回应才动手**。`subagent-driven-development` 默认"任务之间不停下确认"——**该默认在本项目失效**。
 - **提交拆分**：一个 Task 通常 **3-8 个提交**，按 `契约 → 领域 → 装配 → 测试` 分层。
   **修复独立成条**，文档与代码不混提。每一刀都必须可编译。
+- **链路讲解（`collaboration.md §2.6`）**：**一条链路做完后、下一条开始前**，
+  派子 agent 产出一份"从零能读懂"的讲解，放进 `docs/05-interview/`。
+  **子 agent 直接写文件、只回一行回执**；只解释代码实际怎么走，
+  决策理由写成引用（如 `见 ADR-0016`），**不复述**。改字段 / 修 bug / 纯文档改动不触发。
 - **敏感信息绝不入库**：`.env` 不进仓库；前端**不得**把任何密钥写进代码（前端本来也不需要）。
 - **中间件**：M2 只需要 **MySQL + Redis**。
   **⚠️ 开工前先起 Redis**（`cd /d/aaaSoftware/redis && ./redis-server.exe &`）：
@@ -102,11 +106,25 @@ WingtiskyForum/
 - Create: `wt-domain/src/main/java/com/wingtisky/forum/domain/user/UserBrief.java`
 - Create: `wt-domain/src/main/java/com/wingtisky/forum/domain/user/UserQueryService.java`
 - Create: `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/service/UserQueryServiceImpl.java`
-- Modify: `forum/forum-content/pom.xml`（加 `wt-domain` 依赖）
-- Modify: `forum/forum-user/pom.xml`（加 `wt-domain` 依赖）
+- Modify: `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/mapper/UserMapper.java`（**新增批量查询**）
+- Modify: `forum/forum-user/src/main/resources/mapper/UserMapper.xml`
+- Create: `forum/forum-user/src/test/java/com/wingtisky/forum/forum/user/service/UserQueryServiceImplTest.java`
+- Create: `docs/05-interview/01-跨域契约.md`（链路讲解，见 `collaboration.md §2.6`）
+
+> **⚠️ 2026-10-05 更正（动手前读代码读出来的两处）**：
+> 1. 初稿写"给 `forum-user` / `forum-content` 的 pom 加 `wt-domain` 依赖"——**这是多余的**。
+>    两个 pom 在 M0 建骨架时就**已经声明了** `wt-domain`（`forum-user/pom.xml:22-25`、
+>    `forum-content/pom.xml:22-25`）。**这一步不动任何 POM。**
+> 2. 初稿漏了一条：`UserMapper` 只有 `selectById(Long)`，**没有批量方法**，
+>    而 `findBriefs` 必须批量（否则列表页就是 N+1）。所以要新增 mapper 方法 + XML。
 
 **Interfaces:**
-- Produces: `UserBrief(Long id, String nickname, String avatar)`（**record 即可**，它只是个只读投影）
+- Produces: `UserBrief(Long id, String nickname, String avatar)`——**用 `record`**（不可变，语义就是"只读投影"）。
+  **但它不由 MyBatis 直接映射**（record 没有无参构造，映射要写 `<constructor>` resultMap，
+  是个已知摩擦点）。做法：mapper 返回 `User`（**SQL 只 select id / nickname / avatar 三列**），
+  Service 里 `new UserBrief(...)` 转一次。这样既保住不可变的语义，又绕开映射坑，转换逻辑还能单测。
+  ⚠️ 那个"只填三个字段的 `User`"是**部分填充对象**，必须在方法名（`selectBriefsByIds`）与
+  注释里写清楚"**不要当完整的 User 用**"——否则下一个人会拿它去读 `password`（会是 null）
 - Produces: `UserQueryService`，两个方法：
   - `Map<Long, UserBrief> findBriefs(Collection<Long> userIds)` —— **批量，列表页必须用它**
   - `Optional<UserBrief> findBrief(Long userId)` —— 单个，详情页用
