@@ -1,7 +1,6 @@
 package com.wingtisky.forum.forum.user.security;
 
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import com.wingtisky.forum.common.security.CurrentUser;
 import org.springframework.stereotype.Component;
 
 /**
@@ -36,24 +35,25 @@ public class AuthzService {
      * 由 Spring Security 的授权规则决定，不该在这里判断。
      */
     public boolean isOwner(Long ownerId) {
-        Long currentUserId = currentUserId();
+        Long currentUserId = CurrentUser.id();
         return currentUserId != null && currentUserId.equals(ownerId);
     }
 
     /**
      * 当前登录用户的 ID；未登录返回 {@code null}。
      *
-     * <p>principal 之所以是个 {@code Long}，是因为 {@link JwtAuthenticationFilter}
-     * 建立认证上下文时把 userId 放了进去。这里做类型判断而不是直接强转——
-     * 将来若有人改用别的认证方式（比如把 principal 换成 UserDetails），
-     * 强转会抛 ClassCastException 而不是安静地返回 null。
+     * <p><b>⚠️ 注意它的语义：入参是"用户 ID"。</b>本方法比的是
+     * "当前登录用户是不是这个人"。
+     *
+     * <p>要判断"这条<strong>帖子</strong>是不是我发的"，**不能**把帖子 ID 传进来——
+     * 那比的是"帖子 ID 是否等于我的用户 ID"，几乎永远为假（作者自己也被拒），
+     * 而且万一两者恰好相等就会错误放行。帖子那类资源用内容域自己的
+     * {@code PostAuthzService}（Bean 名 {@code postAuthz}）。
+     *
+     * <p>实现委托给 {@link CurrentUser#id()}——M2 之前这段逻辑在本类和限流拦截器里
+     * 各有一份拷贝，已收拢到一处。
      */
     public Long currentUserId() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return null;
-        }
-        Object principal = authentication.getPrincipal();
-        return (principal instanceof Long userId) ? userId : null;
+        return CurrentUser.id();
     }
 }

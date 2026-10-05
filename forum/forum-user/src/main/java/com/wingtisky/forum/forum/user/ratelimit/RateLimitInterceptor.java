@@ -2,14 +2,13 @@ package com.wingtisky.forum.forum.user.ratelimit;
 
 import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
+import com.wingtisky.forum.common.security.CurrentUser;
 import com.wingtisky.forum.infra.redis.RedisKey;
 import com.wingtisky.forum.infra.redis.SlidingWindowRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -140,11 +139,8 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     }
 
     private Long currentUserId() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.isAuthenticated()
-                && authentication.getPrincipal() instanceof Long userId) {
-            return userId;
-        }
-        return null;
+        // 委托给公共实现：M2 之前这段逻辑在本类与 AuthzService 里各有一份，
+        // 已收拢到 wt-common 的 CurrentUser（内容域的帖子归属校验也要用同一份）
+        return CurrentUser.id();
     }
 }
