@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -60,11 +61,14 @@ class PostServiceTest {
     @Mock
     private UserQueryService userQueryService;
 
+    @Mock
+    private TagService tagService;
+
     private PostService postService;
 
     @BeforeEach
     void setUp() {
-        postService = new PostService(postMapper, userQueryService);
+        postService = new PostService(postMapper, userQueryService, tagService);
     }
 
     private static Post post(long id, long authorId, String title) {
@@ -94,7 +98,7 @@ class PostServiceTest {
         @Test
         @DisplayName("摘要从正文生成：换行与连续空白压成一个空格")
         void shouldBuildSummaryFromContent() {
-            postService.create(1L, "标题", "第一行\n\n第二行    带空格");
+            postService.create(1L, "标题", "第一行\n\n第二行    带空格", List.of());
 
             ArgumentCaptor<Post> captor = ArgumentCaptor.forClass(Post.class);
             verify(postMapper).insert(captor.capture());
@@ -104,7 +108,7 @@ class PostServiceTest {
         @Test
         @DisplayName("超长正文按 200 个码点截断")
         void shouldTruncateTo200CodePoints() {
-            postService.create(1L, "标题", "文".repeat(500));
+            postService.create(1L, "标题", "文".repeat(500), List.of());
 
             String summary = capturedSummary();
             assertThat(summary.codePointCount(0, summary.length())).isEqualTo(200);
@@ -115,7 +119,7 @@ class PostServiceTest {
         void shouldNotSplitEmoji() {
             // 199 个汉字 + 1 个 emoji：emoji 正好是第 200 个**码点**。
             // 按码点截 → 完整保留 emoji；按 char 截（substring(0,200)）→ 只留下它的高位代理字符。
-            postService.create(1L, "标题", "文".repeat(199) + "😀" + "文".repeat(50));
+            postService.create(1L, "标题", "文".repeat(199) + "😀" + "文".repeat(50), List.of());
 
             String summary = capturedSummary();
 
@@ -129,7 +133,7 @@ class PostServiceTest {
         @Test
         @DisplayName("正文为空白时摘要为空串，不是 null")
         void shouldReturnEmptySummaryForBlankContent() {
-            postService.create(1L, "标题", "   \n  ");
+            postService.create(1L, "标题", "   \n  ", List.of());
 
             assertThat(capturedSummary()).isEmpty();
         }
@@ -148,8 +152,8 @@ class PostServiceTest {
         @Test
         @DisplayName("一页的作者一次批量查回来——不是每篇查一次")
         void shouldLoadAuthorsInOneBatch() {
-            when(postMapper.countList(null)).thenReturn(2L);
-            when(postMapper.selectPage(null, "LATEST", 0, 20)).thenReturn(List.of(
+            when(postMapper.countList(null, null)).thenReturn(2L);
+            when(postMapper.selectPage(null, null, "LATEST", 0, 20)).thenReturn(List.of(
                     post(1L, 10L, "帖子一"),
                     post(2L, 20L, "帖子二")));
             when(userQueryService.findBriefs(Set.of(10L, 20L))).thenReturn(Map.of(
@@ -171,13 +175,13 @@ class PostServiceTest {
         @Test
         @DisplayName("一条帖子都没有时，连列表查询和作者查询都不发")
         void shouldShortCircuitWhenTotalIsZero() {
-            when(postMapper.countList(null)).thenReturn(0L);
+            when(postMapper.countList(null, null)).thenReturn(0L);
 
             PageResult<PostListItem> result = postService.page(new PostQuery(1, 20, PostSort.LATEST));
 
             assertThat(result.items()).isEmpty();
             assertThat(result.total()).isZero();
-            verify(postMapper, never()).selectPage(any(), anyString(), anyInt(), anyInt());
+            verify(postMapper, never()).selectPage(any(), any(), anyString(), anyInt(), anyInt());
             // 顺带避开一个坑：空集合的批量查询会拼出非法的 IN ()
             verifyNoInteractions(userQueryService);
         }
@@ -185,8 +189,8 @@ class PostServiceTest {
         @Test
         @DisplayName("作者已注销时 author 为 null，但这个条目仍然在列表里")
         void shouldKeepItemWhenAuthorIsGone() {
-            when(postMapper.countList(null)).thenReturn(1L);
-            when(postMapper.selectPage(any(), anyString(), anyInt(), anyInt()))
+            when(postMapper.countList(null, null)).thenReturn(1L);
+            when(postMapper.selectPage(any(), any(), anyString(), anyInt(), anyInt()))
                     .thenReturn(List.of(post(1L, 10L, "帖子")));
             when(userQueryService.findBriefs(any())).thenReturn(Map.of());
 
@@ -200,20 +204,20 @@ class PostServiceTest {
         @Test
         @DisplayName("排序参数原样传给 Mapper（真正的排法写死在 XML 里）")
         void shouldPassSortToMapper() {
-            when(postMapper.countList(null)).thenReturn(1L);
-            when(postMapper.selectPage(null, "HOT", 0, 20)).thenReturn(List.of());
+            when(postMapper.countList(null, null)).thenReturn(1L);
+            when(postMapper.selectPage(null, null, "HOT", 0, 20)).thenReturn(List.of());
             when(userQueryService.findBriefs(any())).thenReturn(Map.of());
 
             postService.page(new PostQuery(1, 20, PostSort.HOT));
 
-            verify(postMapper).selectPage(null, "HOT", 0, 20);
+            verify(postMapper).selectPage(null, null, "HOT", 0, 20);
         }
 
         @Test
         @DisplayName("按作者筛：筛选条件传给 Mapper，总数也按同一条件算")
         void shouldFilterByAuthor() {
-            when(postMapper.countList(10L)).thenReturn(1L);
-            when(postMapper.selectPage(10L, "LATEST", 0, 20))
+            when(postMapper.countList(10L, null)).thenReturn(1L);
+            when(postMapper.selectPage(10L, null, "LATEST", 0, 20))
                     .thenReturn(List.of(post(1L, 10L, "他的帖子")));
             when(userQueryService.findBriefs(any())).thenReturn(Map.of());
 
@@ -224,8 +228,8 @@ class PostServiceTest {
             assertThat(result.items()).hasSize(1);
             // 取数据和数总数必须带同一个筛选条件——否就会出现
             // "总数说有 5 条、实际只翻出 1 条"这种自相矛盾的响应
-            verify(postMapper).countList(10L);
-            verify(postMapper).selectPage(10L, "LATEST", 0, 20);
+            verify(postMapper).countList(10L, null);
+            verify(postMapper).selectPage(10L, null, "LATEST", 0, 20);
         }
 
         @Test
@@ -285,7 +289,7 @@ class PostServiceTest {
         void shouldNotRecomputeSummaryWhenOnlyTitleChanges() {
             when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "旧标题"));
 
-            postService.update(1L, "新标题", null);
+            postService.update(1L, "新标题", null, null);
 
             verify(postMapper).updateContent(1L, "新标题", null, null);
         }
@@ -295,7 +299,7 @@ class PostServiceTest {
         void shouldUpdateSummaryTogetherWithContent() {
             when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
 
-            postService.update(1L, null, "新的正文\n带换行");
+            postService.update(1L, null, "新的正文\n带换行", null);
 
             ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
             verify(postMapper).updateContent(eq(1L), isNull(), eq("新的正文\n带换行"), summary.capture());
@@ -306,7 +310,7 @@ class PostServiceTest {
         @Test
         @DisplayName("两个字段都不给 → A0101，而不是静默地什么都不做还返回成功")
         void shouldRejectEmptyUpdate() {
-            assertThatThrownBy(() -> postService.update(1L, null, null))
+            assertThatThrownBy(() -> postService.update(1L, null, null, null))
                     .isInstanceOf(BizException.class)
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.PARAM_INVALID));
@@ -319,7 +323,7 @@ class PostServiceTest {
         void shouldThrowWhenUpdatingMissingPost() {
             when(postMapper.selectById(999L)).thenReturn(null);
 
-            assertThatThrownBy(() -> postService.update(999L, "t", "c"))
+            assertThatThrownBy(() -> postService.update(999L, "t", "c", null))
                     .isInstanceOf(BizException.class)
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
@@ -333,30 +337,57 @@ class PostServiceTest {
             // 于是用户会看到"帖子不存在"。这里断言它不抛异常。
             when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "一模一样的标题"));
 
-            postService.update(1L, "一模一样的标题", null);
+            postService.update(1L, "一模一样的标题", null, null);
 
             verify(postMapper).updateContent(1L, "一模一样的标题", null, null);
         }
 
         @Test
-        @DisplayName("删帖走的是标记删除方法（真正的 UPDATE SET deleted = 1 在 XML 里，集成测试覆盖）")
-        void shouldCallSoftDelete() {
-            when(postMapper.softDelete(1L)).thenReturn(1);
+        @DisplayName("改帖带标签时，标签整体替换")
+        void shouldReplaceTagsWhenProvided() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
 
-            postService.delete(1L);
+            postService.update(1L, null, null, List.of("java", "mysql"));
 
-            verify(postMapper).softDelete(1L);
+            verify(tagService).replaceTags(1L, List.of("java", "mysql"));
+            verify(postMapper, never()).updateContent(anyLong(), any(), any(), any());
         }
 
         @Test
-        @DisplayName("删一条不存在的帖子 → A0201")
+        @DisplayName("改帖不带标签时，标签不动（null 与空列表是两回事）")
+        void shouldNotTouchTagsWhenTagsIsNull() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
+
+            postService.update(1L, "新标题", null, null);
+
+            verify(tagService, never()).replaceTags(anyLong(), any());
+        }
+
+        @Test
+        @DisplayName("删帖走标记删除，并**先摘掉标签**（否则标签的使用次数永远减不回去）")
+        void shouldDetachTagsThenSoftDelete() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
+
+            postService.delete(1L);
+
+            // 顺序很重要：先 detachAll 再 softDelete
+            var ordered = inOrder(tagService, postMapper);
+            ordered.verify(tagService).detachAll(1L);
+            ordered.verify(postMapper).softDelete(1L);
+        }
+
+        @Test
+        @DisplayName("删一条不存在的帖子 → A0201，且**不动标签计数**")
         void shouldThrowWhenDeletingMissingPost() {
-            when(postMapper.softDelete(999L)).thenReturn(0);
+            when(postMapper.selectById(999L)).thenReturn(null);
 
             assertThatThrownBy(() -> postService.delete(999L))
                     .isInstanceOf(BizException.class)
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
+
+            verify(tagService, never()).detachAll(anyLong());
+            verify(postMapper, never()).softDelete(anyLong());
         }
     }
 }
