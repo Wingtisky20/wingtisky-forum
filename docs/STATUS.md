@@ -25,6 +25,7 @@
 
 - `docs/00-charter/collaboration.md` —— 协作流程
 - `docs/03-design/architecture.md` —— 架构（**已大改，务必读**）
+- `docs/superpowers/specs/2026-09-13-WingtiskyForum-design.md` —— 规格（§1.5 不做的事 / §6.2 里程碑与闸门 / §9 六道闸门 / §12 开放问题）。**设计与计划大量引用它，清单里不能缺**——否则接手人要自己去猜这些引用出自哪
 - `docs/03-design/m2-content-core.md` —— **当前里程碑的设计稿**（库表 / 接口 / 决策结论，**动手前必读**）
 - `docs/superpowers/plans/2026-10-05-m2-content-core.md` —— **当前里程碑的实施计划**（11 个 Task，从 Task 1 开始）
 - `docs/03-design/m1-user-and-security.md` —— M1 设计稿（**M2 沿用其模式**：DTO 分层、异常到错误码的映射、归属校验 Bean、测试写法）
@@ -151,8 +152,13 @@ Spring Boot **3.5.16** · Redisson **3.52.0** · Caffeine **3.2.4** · ArchUnit 
 产品名 **深栈**（技术**栈** + **深**度）· 仓库名 `wingtisky-forum`
 
 **仓库地址**：https://github.com/Wingtisky20/wingtisky-forum（Public）
-- `main` = 设计文档基线（`ad87503`）
-- `feature/m0-bootstrap` = M0 工作分支（当前分支）
+- `main` = 主线，永远可运行。M0 经 PR #1、M1 经 PR #3 合并
+- **当前工作分支**：`feature/m2-content`（M2 的设计稿、计划、代码都落在这里，完成时走 PR 合并）
+
+> **2026-10-05 更正**：上面两行原写着「`main` = 设计文档基线（`ad87503`）」
+> 与「`feature/m0-bootstrap` = M0 工作分支（**当前分支**）」——那是 M0 期间的状态，之后没再更新。
+> **分支名过期不会报错**，只会让接手人以为自己看错了仓库、或者以为还有一条没合的分支。
+> 这类过期信息要在收场时一并更新，别只更新进度。
 
 **⚠️ git 访问 GitHub 必须走代理**（Clash Verge 混合端口 `127.0.0.1:18569`，已 `--local` 配置）。
 **Clash 未运行时 `git push` 会失败——不是仓库坏了。** 详见 `docs/06-runbook/troubleshooting.md`。
