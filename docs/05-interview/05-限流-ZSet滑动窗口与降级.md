@@ -1,8 +1,9 @@
 # 链路讲解 · 限流：ZSet 滑动窗口与降级
 
 > 亮点 5。设计决策记在 `docs/03-design/m1-user-and-security.md` §5 与 `ADR-0014`，
+> M2 的两处扩展记在 `docs/03-design/m2-content-core.md` §5。
 > 本文只讲**代码实际怎么走**：请求进来以后经过谁、每段代码做了什么、
-> 出故障时走哪条岔路。要争论"为什么这么选"，去那两份文档，这里不复述。
+> 出故障时走哪条岔路。要争论"为什么这么选"，去那几份文档，这里不复述。
 
 ---
 
@@ -27,8 +28,8 @@ Tomcat ──► Spring Security 过滤器链（JwtAuthenticationFilter 验令�
    ▼
 DispatcherServlet ──► RateLimitInterceptor.preHandle()      ◄── 限流就在这一层
    │                     │
-   │                     ├─ 从配置里找匹配的规则（没匹配到 → 直接放行）
-   │                     ├─ 拼出 Redis key（维度 + 取值 + 接口路径）
+   │                     ├─ 从配置里找匹配的规则（路径 + 方法都命中；没匹配到 → 直接放行）
+   │                     ├─ 拼出 Redis key（维度 + 取值 + 方法 + 接口路径）
    │                     ├─ redisLimiter.tryAcquire(key, limit, windowMs)
    │                     │      └─► Redis 执行 Lua：清窗口 → 计数 → 判断 → 记本次
    │                     ├─ 放行  → return true，继续走 Controller
@@ -36,6 +37,8 @@ DispatcherServlet ──► RateLimitInterceptor.preHandle()      ◄── 限�
    │
    ▼
 Controller
+   │
+   ├─（登录接口）AuthService.login ──► checkUsernameRateLimit   ◄── 用户名维度的限流在这里
    │
    └─ 若抛了 BizException ──► GlobalExceptionHandler ──► HTTP 429 + 统一响应体
 ```
@@ -55,31 +58,34 @@ Controller
 ### 1. key 怎么长——`RedisKey.rateLimit`
 
 ```java
-public static String rateLimit(String dimension, String value, String path) {
-    return PREFIX + "rate:" + dimension + ":" + value + ":" + normalize(path);
+public static String rateLimit(String dimension, String value, String method, String path) {
+    return PREFIX + "rate:" + dimension + ":" + value + ":" + normalize(method + ":" + path);
 }
 
-private static String normalize(String path) {
-    return path.replace('/', '_');
+private static String normalize(String suffix) {
+    return suffix.replace('/', '_');
 }
 ```
 
 （`wt-infra/.../redis/RedisKey.java`。`PREFIX` 是 `"wt:"`。）
 
-三段拼出来的样子，登录接口按 IP 限就是：
+四段拼出来的样子，帖子列表按登录用户限就是：
 
 ```
-wt:rate:ip:127.0.0.1:_api_auth_login
- │    │   │      │        │
- │    │   │      │        └─ path：接口路径（斜杠换成下划线）
- │    │   │      └─ value：维度取值（IP 或用户 ID）
- │    │   └─ dimension：ip / user
+wt:rate:user:42:GET:_api_posts
+ │    │   │    │  │       │
+ │    │   │    │  │       └─ path：接口路径（斜杠换成下划线）
+ │    │   │    │  └─ method：请求方法
+ │    │   │    └─ value：维度取值（IP、用户 ID 或用户名）
+ │    │   └─ dimension：ip / user / username
  │    └─ 用途段
  └─ 全局前缀
 ```
 
-三段**缺一不可**，这不是为了好看：少了 `path` 那段，不同接口会共用同一个计数器——
-今天访问帖子、明天访问订单，各来一次就凑够 100 次被误判超限。这一点在类注释里写明了。
+四段**缺一不可**，这不是为了好看：少了 `path` 那段，不同接口会共用同一个计数器——
+今天访问帖子、明天访问订单，各来一次就凑够 100 次被误判超限。
+`method` 那段是 M2 加的，理由见下文「M2 的扩展」——同一条路径上的读与写用的是两套阈值，
+不带方法它们就会共用一个计数器。两条都写在类注释里。
 
 路径里的 `/` 替换成 `_`，是为了让 RedisInsight 这类工具按冒号折叠出的层级结构正确，
 不会把 `/api/auth/login` 里的斜杠也当成分隔。
@@ -168,22 +174,29 @@ public RateLimitResult tryAcquire(String key, int limit, long windowMs) {
 
 ### 4. 谁来决定限多少、挂了怎么办——`RateLimitProperties` + `RateLimitInterceptor`
 
-`RateLimitProperties` 绑定 `application.yml` 的 `wt.rate-limit.*`，每条规则四个字段：
-路径模式、维度（`ip` / `user`）、阈值、窗口、降级策略（`open` / `local` / `closed`）。
+`RateLimitProperties` 绑定 `application.yml` 的 `wt.rate-limit.*`，每条规则这些字段：
+路径模式、适用方法（可留空，空 = 不限方法）、维度（`ip` / `user`）、阈值、窗口、
+降级策略（`open` / `local` / `closed`）。
 规则**按顺序匹配，第一条命中的生效**，所以更具体的路径必须排在通配前面——
 `/api/auth/login` 要写在 `/api/**` 之前，否则登录接口会先被那条宽松的默认规则吃掉。
+加了方法维度之后，顺序还多一层讲究：`POST /api/posts`（发帖 10/分钟）
+必须排在 `POST /api/**`（其余写接口 30/分钟）之前，否则后者先命中。
+方法维度是 M2 加的，为什么值得单独讲一段，见下文「M2 的扩展」。
 
 拦截器把"规则"和"执行"接起来，`preHandle` 是一条直线：
 
 ```java
-RateLimitProperties.Rule rule = matchRule(request.getRequestURI());
+RateLimitProperties.Rule rule = matchRule(request);
 if (rule == null) {
     return true;                       // 没规则 → 不限流
 }
 
+// Key 里带上方法：同一条路径上的读与写用两套阈值，
+// 不带方法它们就会共用一个计数器（详见 RedisKey.rateLimit 的说明）
 String key = RedisKey.rateLimit(
         rule.getDimension().name().toLowerCase(),
         resolveDimensionValue(rule, request),
+        request.getMethod(),
         request.getRequestURI());
 
 boolean allowed;
@@ -196,6 +209,9 @@ try {
 }
 
 if (!allowed) {
+    log.warn("触发限流: path={}, dimension={}, key={}, limit={}/{}",
+            request.getRequestURI(), rule.getDimension(), key,
+            rule.getLimit(), rule.getWindow());
     throw new BizException(ErrorCode.TOO_MANY_REQUESTS);
 }
 return true;
@@ -316,7 +332,7 @@ M9 之后要前移到 Gateway（architecture.md §4.1：在网关挡掉无效流
 **场景 A：阈值内，10 次正常放行。**
 
 规则命中 `/api/auth/login`：`dimension=ip`、`limit=10`、`window=1m`、`fallback=local`。
-假设客户端 IP 是 `127.0.0.1`，key 就是 `wt:rate:ip:127.0.0.1:_api_auth_login`。
+假设客户端 IP 是 `127.0.0.1`，key 就是 `wt:rate:ip:127.0.0.1:POST:_api_auth_login`。
 
 | 第几次 | Lua 走到哪 | Redis 里的状态 | 返回 | 对外的结果 |
 |---|---|---|---|---|
@@ -345,6 +361,163 @@ M9 之后要前移到 Gateway（architecture.md §4.1：在网关挡掉无效流
 对照一下 `ADR-0014` 的实测：停掉 Redis 后，登录接口 `fallback=local` **仍限在 10 次**，
 第 11 次 429；普通接口 `fallback=open` **正常放行 200**，没被误伤。两条路径都验证过，
 不是纸面设计。
+
+---
+
+## M2 的扩展：方法维度与用户名维度
+
+上面那条链路是 M1 建起来的。M2 的 Task 9 在它上面加了两处，原有的代码一行没删：
+一处是把规则从"只按路径"扩成"路径 + 方法"，一处是补上 M1 有意留下的用户名维度缺口。
+
+### 扩展一：规则可以区分 HTTP 方法
+
+M1 的规则只按路径匹配，一条 `/api/posts` 会同时管住公开的列表查询和发帖——
+按发帖的严格阈值设，读就被误伤；按读的宽松阈值设，发帖又等于没限。
+M2 给 `Rule` 加了一个 `methods` 字段：
+
+```java
+/**
+ * 这条规则适用的 HTTP 方法，如 {@code [POST, PUT, PATCH, DELETE]}。
+ *
+ * <p><b>空（或不填）表示不限方法</b>，但那种用法要小心：同一条路径上的
+ * 读与写通常需要**两套阈值**（读宽松、写严格）。不区分方法的话，
+ * 一条 {@code /api/posts} 的规则会同时管住公开的列表查询和发帖——
+ * 按发帖的严格阈值设，读就被误伤；按读的宽松阈值设，发帖又等于没限。
+ */
+private List<HttpMethod> methods;
+```
+
+（`forum/.../ratelimit/RateLimitProperties.java`。注释末尾还写了这条设计的**代价**：
+一条路径可能要写两条规则，一条给读、一条给写——换来的是"阈值与操作重量挂钩"这件事在配置里看得见。）
+
+判断方法命中的 `methodMatches` 写着两件容易写错的事：
+
+```java
+private static boolean methodMatches(RateLimitProperties.Rule rule, String actualMethod) {
+    List<HttpMethod> methods = rule.getMethods();
+    if (methods == null || methods.isEmpty()) {
+        return true;
+    }
+    return methods.stream().anyMatch(m -> m.name().equalsIgnoreCase(actualMethod));
+}
+```
+
+第一，**没配方法就是不限方法**（`methods` 空则恒为 `true`）——老配置不用改就能继续用。
+第二，比较用的是 `m.name().equalsIgnoreCase(...)` 而不是 `HttpMethod.matches(...)`：
+前者不依赖 Spring 新增的 API，也不会因为将来多出某个方法而行为变化。
+
+**真正容易写错的地方在它被调用的位置**。`matchRule` 把它**并进了"找规则"这一层**：
+
+```java
+private RateLimitProperties.Rule matchRule(HttpServletRequest request) {
+    for (RateLimitProperties.Rule rule : properties.getRules()) {
+        if (rule.getPath() != null
+                && pathMatcher.match(rule.getPath(), request.getRequestURI())
+                && methodMatches(rule, request.getMethod())) {
+            return rule;
+        }
+    }
+    return null;
+}
+```
+
+如果把它拆出去，写成"先按路径找到第一条，再看方法对不对，不对就放行"，那么
+`GET /api/posts` 会先命中 `POST /api/posts` 那条（发帖，10 次/分），
+因为方法不符**径直放行**，后面那条读接口的规则（100 次/分）根本没机会被看到——
+**表现是这条接口完全不受限流**，而配置看起来完全正确。这段反面就写在 `matchRule`
+的方法注释里，第一版正是这么写的，被测试逮住。
+
+配置里因此按操作重量分成三档（`app/src/main/resources/application.yml`）：
+
+```yaml
+      # 发帖：最重的写操作（要写正文、标签、计数），单独一档更严
+      - path: /api/posts
+        methods: [POST]
+        dimension: user
+        limit: 10
+        window: 1m
+        fallback: open
+
+      # 其余写接口：评论、点赞、收藏、后台治理都落在这里
+      - path: /api/**
+        methods: [POST, PUT, PATCH, DELETE]
+        dimension: user
+        limit: 30
+        window: 1m
+        fallback: open
+
+      # 读接口：按登录用户限。不用 IP 是因为同一个办公室共用一个出口 IP，
+      # 按 IP 限会把无辜的人一起限掉。未登录时自动退回 IP。
+      - path: /api/**
+        methods: [GET]
+        dimension: user
+        limit: 100
+        window: 1m
+        fallback: open
+```
+
+**方法也必须进 Redis key**——否则同一条路径上的读与写会共用一个计数器，
+读几十次就把写的那 10 次额度吃掉了，表现是"我明明没发几次帖，却被限流了"。
+key 的构造在 §1 已经改成四段，理由写在 `RedisKey.rateLimit` 的注释里。
+
+### 扩展二：用户名维度的限流（M1 留的缺口）
+
+M1 设计 §5.4 明确留了这个缺口并写下了建议做法，M2 按它补上（设计稿 §5）。
+它**不在限流拦截器里**，在 `AuthService.login` 里，而且放在**最前面**：
+
+```java
+public LoginResult login(String username, String rawPassword) {
+    checkUsernameRateLimit(username);
+
+    User user = userService.authenticate(username, rawPassword);
+    List<String> roles = userService.getRoleCodes(user.getId());
+    return issueTokens(user, roles);
+}
+```
+
+放最前面的理由很实在：再往下走一步就是 BCrypt 比对（每次约 100ms），
+放在后面的话撞库请求已经打到密码校验上了，限流来得太晚。
+
+```java
+private void checkUsernameRateLimit(String username) {
+    if (username == null || username.isBlank()) {
+        return;
+    }
+
+    RateLimitProperties.LoginUsernameLimit rule = rateLimitProperties.getLoginUsername();
+    String key = RedisKey.rateLimit("username", username, "POST", "/api/auth/login");
+
+    boolean allowed;
+    try {
+        allowed = redisLimiter.tryAcquire(key, rule.getLimit(), rule.getWindow().toMillis())
+                .allowed();
+    } catch (RuntimeException e) {
+        // 记 ERROR 而不是 WARN：限流正在失效，这是需要被看到的信号
+        log.error("用户名维度限流降级：Redis 不可用，退回本地内存。key={}", key, e);
+        allowed = localLimiter.tryAcquire(key, rule.getLimit(), rule.getWindow().toMillis());
+    }
+
+    if (!allowed) {
+        log.warn("触发用户名维度限流: username={}, limit={}/{}",
+                username, rule.getLimit(), rule.getWindow());
+        throw new BizException(ErrorCode.TOO_MANY_REQUESTS);
+    }
+}
+```
+
+几处和拦截器版本不一样的地方：
+
+- **为什么在业务方法里**：拦截器跑在 Controller 之前，**拿不到请求体里的用户名**；
+  要在那里拿就得把请求包一层（`ContentCachingRequestWrapper`），而请求体是一次性的，
+  读完后续 `@RequestBody` 就拿不到了。放到这里，用户名已经是方法参数。
+  代价是限流逻辑分了两处——这段注释留在方法上，就是为了免得下一个人把它挪回拦截器里，"一挪就坏"。
+- **降级策略写死在代码里，配置里没有对应字段**：`LoginUsernameLimit` 只有 `limit` 和 `window`。
+  这一维度 Redis 挂了**一律退回本地内存**——"放行"等于把门打开、"拒绝"等于谁都登不进来，
+  只有一条路可走，就不必在配置里留一个永远不会改成别的值的选项。
+- **用户名为空直接跳过**：避免拿空串当桶，把所有没带用户名的请求挤进同一个计数器。
+- 它和 IP 维度**不是重复**：按 IP 挡"同一台机器试很多账号"，按用户名挡"很多台机器试同一个账号"，
+  这是撞库的两种形态，只限一个都会漏。阈值 `5 / 分钟`（`wt.rate-limit.login-username`）
+  也比 IP 维度更严——正常用户不会一分钟内连试 5 次密码。
 
 ---
 
@@ -403,14 +576,13 @@ Sentinel 会抢戏——亮点是自己实现的 ZSet 滑动窗口，换成 Sent
 那个头客户端可伪造。没有反向代理时信任它，攻击者每次换一个 XFF 值就能绕过 IP 限流。
 M9 上了 Gateway 才能信，且只取网关追加的那一段。
 
-**Q：登录为什么不做"按用户名限流"？设计稿 §5.4 不是列了吗？**
-**M1 没有实现，这是有意留的缺口。** M1 实际落地的规则只有两条：登录/注册按 IP 限 10/分钟、
-普通接口按用户限 100/分钟。用户名维度被推迟的原因是具体的——用户名在**请求体**里，
-而拦截器跑在 Controller 之前，要拿到它必须先读请求体，读完后 `@RequestBody` 就拿不到数据了，
-得加一层 `ContentCachingRequestWrapper` 把请求包起来。而它要挡的那种攻击
-（多台机器打同一个账号）已被 BCrypt 比对本身的耗时和账号锁定策略部分覆盖。
-设计稿建议的做法是**把用户名维度的限流放进登录的业务方法**（那里用户名已经解析好了），
-但那是 M2 或更后的事。**这一点必须如实说成"没做"，不是"做了"。**
+**Q：登录的"按用户名限流"为什么放在 `AuthService` 里，不放进拦截器？**
+（M1 设计 §5.4 说它是留待后补的缺口，M2 已按该节的建议补上，见上文「M2 的扩展」。）
+拦截器跑在 Controller 之前，**拿不到请求体里的用户名**。要在那里拿，就必须先读请求体，
+而请求体是一次性的——读完后续 `@RequestBody` 就拿不到数据了，
+得加一层 `ContentCachingRequestWrapper` 把请求包起来。
+`AuthService.login` 里用户名**已经是方法参数**，直接用即可，不需要任何请求包装。
+代价是限流逻辑从"统一拦截器"分出一点到业务层，方法注释里写明了这是有意取舍。
 
 ---
 
@@ -419,14 +591,18 @@ M9 上了 Gateway 才能信，且只取网关追加的那一段。
 | 文件 | 提供了什么 |
 |---|---|
 | `wt-infra/src/main/java/com/wingtisky/forum/infra/redis/SlidingWindowRateLimiter.java` | Lua 脚本本体、member 唯一性与 `math.random` 的两条理由 |
-| `wt-infra/src/main/java/com/wingtisky/forum/infra/redis/RedisKey.java` | `rateLimit` 三段 key 的构造与"缺 path 会误判"的理由 |
-| `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/ratelimit/RateLimitInterceptor.java` | 拦截入口、try 范围收窄的反面、降级分支、维度取值与 XFF 取舍 |
-| `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/ratelimit/RateLimitProperties.java` | 规则模型、规则按序匹配、`Dimension` / `Fallback` 枚举 |
+| `wt-infra/src/main/java/com/wingtisky/forum/infra/redis/RedisKey.java` | `rateLimit` 四段 key 的构造，方法为什么必须进 key、缺 path 会误判的理由 |
+| `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/ratelimit/RateLimitInterceptor.java` | 拦截入口、`matchRule` / `methodMatches`、try 范围收窄的反面、降级分支、维度取值与 XFF 取舍 |
+| `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/ratelimit/RateLimitProperties.java` | 规则模型、`Rule.methods`、`LoginUsernameLimit`、规则按序匹配、`Dimension` / `Fallback` 枚举 |
 | `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/ratelimit/LocalRateLimiter.java` | 本地兜底实现、`MAX_KEYS` 上限、固定窗口与多实例短板 |
+| `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/service/AuthService.java` | `login` 里调用 `checkUsernameRateLimit`、用户名维度为什么放在这里的注释 |
 | `forum/forum-user/src/main/java/com/wingtisky/forum/forum/user/config/WebConfig.java` | 拦截器挂到 `/api/**` 的装配与"通配优于逐个列出"的理由 |
-| `app/src/main/resources/application.yml` | `wt.rate-limit` 段的真实规则与注释（登录/注册 `local`、普通接口 `open`） |
+| `app/src/main/resources/application.yml` | `wt.rate-limit` 段的真实规则与注释（登录/注册 `local`、按方法分读 100 / 写 30 / 发帖 10 三档、`login-username` 段） |
 | `docs/03-design/m1-user-and-security.md` §5 | 亮点 5 的设计决策：为什么 ZSet、为什么 Lua、降级三种、§5.4 用户名维度的缺口 |
+| `docs/03-design/m2-content-core.md` §5 | M2 补用户名维度的做法与两处理由（阈值为什么是 5、为什么和 IP 维度不重复） |
 | `docs/02-decisions/ADR-0014-rate-limit-degradation.md` | 降级决策的完整论证与**停 Redis 的实测结果** |
 | `docs/06-runbook/api-smoke.http` | 第 15 条：阈值内必须 401 而非 429（反面对照的实测入口） |
 | `app/src/test/java/com/wingtisky/forum/SlidingWindowRateLimiterIntegrationTest.java` | 边界测试：连真实 Redis、在窗口后段发请求、验证"窗口在滑"而非"key 过期" |
+| `forum/forum-user/src/test/java/com/wingtisky/forum/forum/user/ratelimit/RateLimitInterceptorTest.java` | 方法维度测试：同路径按方法命中不同规则、key 里带方法、没配方法仍不限方法 |
+| `forum/forum-user/src/test/java/com/wingtisky/forum/forum/user/service/AuthServiceTest.java` | 用户名维度测试：超限时不去验密码、按用户名分桶、Redis 挂了仍不放行、空用户名跳过 |
 | `wt-common/src/main/java/com/wingtisky/forum/common/result/ErrorCode.java` | `TOO_MANY_REQUESTS` = `A0004` / HTTP 429 |
