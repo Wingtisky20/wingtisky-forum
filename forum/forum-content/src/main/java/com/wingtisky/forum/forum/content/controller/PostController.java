@@ -1,6 +1,7 @@
 package com.wingtisky.forum.forum.content.controller;
 
 import com.wingtisky.forum.common.result.Result;
+import com.wingtisky.forum.common.security.CurrentUser;
 import com.wingtisky.forum.forum.content.dto.CreatePostRequest;
 import com.wingtisky.forum.forum.content.dto.PageResult;
 import com.wingtisky.forum.forum.content.dto.PostDetail;
@@ -89,7 +90,10 @@ public class PostController {
     @GetMapping("/posts/{id}")
     public Result<PostDetail> detail(@PathVariable Long id,
                                      @AuthenticationPrincipal Long viewerId) {
-        return Result.success(postService.getDetail(id, viewerId));
+        // "你是不是版主"在这里问、传下去——Service 不去读安全上下文。
+        // 被下架的帖子：作者与版主仍能打开，别人当作不存在。
+        return Result.success(postService.getDetail(id, viewerId,
+                CurrentUser.hasAnyRole("MODERATOR", "ADMIN")));
     }
 
     /**
