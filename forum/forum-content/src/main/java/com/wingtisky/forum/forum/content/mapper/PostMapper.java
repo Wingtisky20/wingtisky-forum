@@ -96,6 +96,18 @@ public interface PostMapper {
     /** 调整帖子的收藏数。 */
     int addCollectCount(@Param("postId") Long postId, @Param("delta") int delta);
 
+    /**
+     * 后台治理：改置顶 / 加精 / 上下架（**部分更新**，传 {@code null} 的不动）。
+     *
+     * <p>{@code status} 与 {@code deleted} 是两件事，别混：前者是版主的治理动作
+     * （可恢复），后者是作者删帖。这个方法的 {@code WHERE} 只排除 {@code deleted = 1}，
+     * 不排除已下架的——**否则被下架的帖子就再也恢复不了了**。
+     */
+    int updateAttributes(@Param("id") Long id,
+                         @Param("topFlag") Boolean topFlag,
+                         @Param("featuredFlag") Boolean featuredFlag,
+                         @Param("status") Integer status);
+
     /** 逻辑删除（标记 {@code deleted = 1}）。**不是真的删行**——见 V2 建表脚本的说明。 */
     int softDelete(Long id);
 

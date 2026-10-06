@@ -93,6 +93,22 @@ public class TagService {
     }
 
     /**
+     * 把这条帖子的**每个标签**的使用次数都调整 {@code delta}（不改关联）。
+     *
+     * <p>用在"上下架"上：帖子从公开列表消失时，它给各标签贡献的那一篇也该消失——
+     * 否则标签页写着"12 篇"、点进去只有 9 篇（差的那几篇被下架了），
+     * **而这正是当初为删帖做减计数时的那条理由**，两者是同一件事。
+     *
+     * <p>与 {@link #detachAll} 的区别：那个还删关联（改帖换标签、删帖时用），
+     * 这个只动计数（帖子还在，只是不再公开）。
+     */
+    @Transactional
+    public void adjustPostCountForTagsOf(Long postId, int delta) {
+        tagMapper.selectByPostId(postId)
+                .forEach(tag -> tagMapper.addPostCount(tag.getId(), delta));
+    }
+
+    /**
      * 取用或创建。
      *
      * <p><b>并发下两个请求同时第一次用同一个标签</b>时会怎样：

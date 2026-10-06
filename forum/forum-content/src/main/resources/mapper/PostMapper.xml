@@ -120,6 +120,21 @@
         WHERE id = #{postId} AND deleted = 0
     </update>
 
+    <!-- 后台治理：置顶 / 加精 / 上下架。部分更新，传 null 的不动。
+         ⚠️ WHERE 只排除 deleted = 1，**不排除已下架的**——
+         否则一条帖子被下架之后就再也恢复不了了（它自己把自己锁在外面）。
+         三个字段全为 null 时会生成空的 SET 子句、SQL 语法错误；
+         调用方（PostService.administrate）已在入口拦掉。 -->
+    <update id="updateAttributes">
+        UPDATE t_post
+        <set>
+            <if test="topFlag != null">top_flag = #{topFlag},</if>
+            <if test="featuredFlag != null">featured_flag = #{featuredFlag},</if>
+            <if test="status != null">status = #{status},</if>
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
     <update id="softDelete">
         UPDATE t_post
         SET deleted = 1
