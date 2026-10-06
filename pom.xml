@@ -184,6 +184,38 @@
           <!-- 走属性（见 <properties> 里的 excluded.groups），不用字面量——
                否则命令行覆盖不动 -->
           <excludedGroups>${excluded.groups}</excludedGroups>
+
+          <!-- ============================================================
+               关掉 manifest-only JAR —— 修一个「不报错、但静默少跑测试」的坑
+               ============================================================
+
+               症状（2026-10-06 实测）：`mvn -B test` 打印 BUILD SUCCESS，
+               但 151 个单元测试**只执行了 56 个**。被跳过的测试类在报告里显示
+               `Tests run: 0`，读起来像"这个类里没有测试"。
+
+               根因：surefire 为了不把命令行撑爆，默认把"要用哪些依赖"写成一个
+               临时 manifest JAR 交给 fork 出的测试进程（useManifestOnlyJar=true）。
+               该文件落在系统临时目录（本机是 C:\Users\w\AppData\Local\Temp），
+               而**项目与 Maven 仓库都在 D 盘**。跨盘符时这份清单生成不出来
+               （surefire 的 dump 里写着 `'other' has different root`），
+               fork 进程的 classpath 是断的 → JUnit 在**发现阶段**就失败 →
+               surefire 把"发现失败"记成"这个类没有测试" → 构建照常 SUCCESS。
+
+               危害：本机所有"测试全过"的结论都不可信，**而且看不出来**。
+               forum-content 的 94 个测试（M3 要动的那块）一个都不会跑。
+
+               为什么不只写进文档：文档挡不住下一个接手的人 ——
+               他会照 README 跑 `mvn -B test`，然后得到一个假的绿。
+
+               代价：classpath 改用命令行传递。Windows 命令行有长度上限
+               （约 32K 字符），依赖极多时可能反过来报"命令行过长"。
+               本项目远未触及该上限（改完实测 151 个全跑）。Linux/CI 不受影响。
+
+               将来若以别的面貌复现，用这个手法定位：
+               看报告里有没有 `Tests run: 0` 的类 → 有则翻该模块
+               `target/surefire-reports/` 下的 *.dumpstream。
+               ============================================================ -->
+          <useManifestOnlyJar>false</useManifestOnlyJar>
         </configuration>
       </plugin>
     </plugins>

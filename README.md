@@ -204,7 +204,14 @@ bash scripts/seed-demo.sh
 mvn -B test
 ```
 
-末尾出现 `BUILD SUCCESS` 就是全过。
+**要看的不是 `BUILD SUCCESS`，是测试数。** 末尾各模块的 `Tests run:` 加起来应当是 **151**。
+
+> 为什么单说这一句：2026-10-06 实测过一次——本项目在这台 Windows 机器上，
+> `mvn -B test` 曾经**只跑了 151 个里的 56 个，却照样打印 `BUILD SUCCESS`**。
+> 原因是 surefire 的依赖清单临时文件跨盘符生成失败，被跳过的测试类被记成
+> `Tests run: 0`，看起来像"这个类里没有测试"。已在父 POM 里修掉，
+> 但**"绿灯 ≠ 测试跑了"这个教训留着**——判断依据始终是数对不对。
+> 完整记录见 `docs/06-runbook/troubleshooting.md` 的 2026-10-06 一条。
 
 ---
 
