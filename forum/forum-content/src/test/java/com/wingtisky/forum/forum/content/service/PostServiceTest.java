@@ -615,6 +615,39 @@ class PostServiceTest {
 
             assertThat(postService.getDetail(1L, null, false).offline()).isFalse();
         }
+
+        // ---------- M3 Task 7：治理动作的失效 ----------
+
+        @Test
+        @DisplayName("★ 下架之后要删缓存——这是「下架后 45 秒内匿名还看得到」那个洞的堵法")
+        void shouldEvictOnTakingOffline() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "正常帖子"));
+
+            postService.administrate(1L, 99L, null, null, Post.STATUS_OFFLINE);
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("只改置顶 / 加精也要删缓存——top 与 featured 都在缓存对象里")
+        void shouldEvictOnTopping() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "正常帖子"));
+
+            postService.administrate(1L, 99L, true, true, null);
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("治理一条不存在的帖子 → 不删缓存（什么都没改）")
+        void shouldNotEvictWhenAdministeringMissingPost() {
+            when(postMapper.selectById(999L)).thenReturn(null);
+
+            assertThatThrownBy(() -> postService.administrate(999L, 99L, true, null, null))
+                    .isInstanceOf(BizException.class);
+
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
+        }
     }
 
     @Nested
@@ -725,6 +758,49 @@ class PostServiceTest {
 
             verify(tagService, never()).detachAll(anyLong());
             verify(postMapper, never()).softDelete(anyLong());
+        }
+
+        // ---------- M3 Task 7：失效清单 ----------
+
+        @Test
+        @DisplayName("★ 改帖之后要删缓存——否则详情页会一直显示旧标题，而且不会报错")
+        void shouldEvictAfterUpdate() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "旧标题"));
+
+            postService.update(1L, "新标题", null, null);
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("只改标签也要删缓存——标签就在缓存对象里，改完不删会一直显示旧标签")
+        void shouldEvictWhenOnlyTagsChange() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
+
+            postService.update(1L, null, null, List.of("Redis"));
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("改帖失败（帖子不存在）时不删缓存——什么都没改，删了只是白让下一次读回源")
+        void shouldNotEvictWhenUpdateFails() {
+            when(postMapper.selectById(999L)).thenReturn(null);
+
+            assertThatThrownBy(() -> postService.update(999L, "新标题", null, null))
+                    .isInstanceOf(BizException.class);
+
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
+        }
+
+        @Test
+        @DisplayName("★ 删帖之后要删缓存——deleted 变了，可见性就变了")
+        void shouldEvictAfterDelete() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
+
+            postService.delete(1L);
+
+            verify(postDetailCache).evictAfterCommit(1L);
         }
     }
 }

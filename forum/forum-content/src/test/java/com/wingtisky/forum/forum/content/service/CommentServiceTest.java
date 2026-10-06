@@ -4,6 +4,7 @@ import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
 import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.domain.user.UserQueryService;
+import com.wingtisky.forum.forum.content.cache.PostDetailCache;
 import com.wingtisky.forum.forum.content.dto.CommentView;
 import com.wingtisky.forum.forum.content.dto.PageResult;
 import com.wingtisky.forum.forum.content.entity.Comment;
@@ -58,11 +59,16 @@ class CommentServiceTest {
     @Mock
     private UserQueryService userQueryService;
 
+    /** 帖子的详情缓存。评论会改 `commentCount`，而它就在缓存对象里。 */
+    @Mock
+    private PostDetailCache postDetailCache;
+
     private CommentService commentService;
 
     @BeforeEach
     void setUp() {
-        commentService = new CommentService(commentMapper, postMapper, userQueryService);
+        commentService = new CommentService(commentMapper, postMapper, userQueryService,
+                postDetailCache);
     }
 
     private static Post post(long id) {
@@ -178,13 +184,15 @@ class CommentServiceTest {
         }
 
         @Test
-        @DisplayName("发一条评论，帖子的评论数 +1")
+        @DisplayName("发一条评论，帖子的评论数 +1，并删掉这篇帖子的缓存")
         void shouldBumpCommentCount() {
             when(postMapper.selectById(POST_ID)).thenReturn(post(POST_ID));
 
             commentService.create(POST_ID, ME, null, "内容");
 
             verify(postMapper).addCommentCount(POST_ID, 1);
+            // commentCount 在缓存对象里 → 不删的话，详情页会一直显示旧的评论数
+            verify(postDetailCache).evictAfterCommit(POST_ID);
         }
     }
 
@@ -260,6 +268,9 @@ class CommentServiceTest {
 
             verify(commentMapper).softDeleteReplies(100L);
             verify(postMapper).addCommentCount(POST_ID, -4);
+            // 删掉 4 条（1 顶层 + 3 回复），缓存只需要删**一次**——
+            // 删的是同一个 key，多删几次没有意义
+            verify(postDetailCache).evictAfterCommit(POST_ID);
         }
 
         @Test
@@ -272,10 +283,11 @@ class CommentServiceTest {
 
             verify(commentMapper, never()).softDeleteReplies(anyLong());
             verify(postMapper).addCommentCount(POST_ID, -1);
+            verify(postDetailCache).evictAfterCommit(POST_ID);
         }
 
         @Test
-        @DisplayName("删一条不存在的评论 → A0202，且不动评论数")
+        @DisplayName("删一条不存在的评论 → A0202，且不动评论数，也不删缓存")
         void shouldThrowWhenDeletingMissingComment() {
             when(commentMapper.selectById(999L)).thenReturn(null);
 
@@ -284,6 +296,7 @@ class CommentServiceTest {
                     .satisfies(e -> assertThat(err(e).getErrorCode()).isEqualTo(ErrorCode.COMMENT_NOT_FOUND));
 
             verify(postMapper, never()).addCommentCount(anyLong(), anyInt());
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
         }
     }
 }

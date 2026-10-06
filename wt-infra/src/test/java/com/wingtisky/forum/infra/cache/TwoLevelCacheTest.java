@@ -10,6 +10,8 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -241,6 +243,71 @@ class TwoLevelCacheTest {
         assertThat(value.title()).isEqualTo("回源救回来");
         // 坏数据要被清掉，否则每次都要走一遍"解析失败→回源"
         assertThat(l2.get(KEY)).isNotEqualTo("这不是合法的 JSON");
+    }
+
+    // ---------- 事务提交后才失效（Task 7） ----------
+
+    @Test
+    @DisplayName("【没有事务在跑】evictAfterCommit 立刻删——不能因为「没人来提交」就永远不删")
+    void withoutTransactionEvictsImmediately() {
+        cache.get(KEY, Sample.class, POLICY, () -> sample("v"));
+        assertThat(l2).containsKey(KEY);
+
+        cache.evictAfterCommit(KEY);
+
+        assertThat(l2).doesNotContainKey(KEY);
+        assertThat(localCache.get(KEY)).isNull();
+    }
+
+    @Test
+    @DisplayName("★【有事务在跑】提交之前缓存**原封不动**，提交之后才删")
+    void withTransactionWaitsForCommit() {
+        cache.get(KEY, Sample.class, POLICY, () -> sample("v"));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            cache.evictAfterCommit(KEY);
+
+            // 这一步是本方法的全部理由：事务还没提交，缓存必须还在。
+            // 在事务体里直接删的话，"删缓存"会先于"更新库"对外可见，
+            // 中间那道窗口里进来的并发读会把**旧值**重新灌回缓存——
+            // 而且它会一直留着，直到 TTL 到期。那就等于把顺序做成了
+            // 「先删缓存、再更新库」，正是设计稿 §4 否决掉的那个。
+            assertThat(l2)
+                    .as("提交之前就删，等于把顺序做成了「先删缓存、再更新库」")
+                    .containsKey(KEY);
+
+            fireAfterCommit();
+
+            assertThat(l2).doesNotContainKey(KEY);
+            assertThat(localCache.get(KEY)).as("L1 也要跟着清").isNull();
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    @DisplayName("【事务回滚】不删缓存——库里的值根本没变过，缓存本来就不脏")
+    void rollbackDoesNotEvict() {
+        cache.get(KEY, Sample.class, POLICY, () -> sample("v"));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            cache.evictAfterCommit(KEY);
+
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(s -> s.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+            // 回滚时删了也不出错，只是白让下一次读多回源一次。
+            // 这里把"不删"钉住，是为了让"什么时候删"这件事有明确边界。
+            assertThat(l2).containsKey(KEY);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    /** 把当前线程上登记的事务同步回调当作"事务提交了"跑一遍。 */
+    private static void fireAfterCommit() {
+        TransactionSynchronizationManager.getSynchronizations()
+                .forEach(TransactionSynchronization::afterCommit);
     }
 
     // ---------- 防击穿（Task 3） ----------
