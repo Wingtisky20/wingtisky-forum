@@ -93,6 +93,18 @@ public class TagService {
     }
 
     /**
+     * 这条帖子带的标签。**详情页要显示它们**——否则用户看到一篇帖子，
+     * 不知道它属于哪个话题、也没法顺着标签去看同类内容。
+     *
+     * <p>返回的是 {@link TagView}（返回形状），不是实体——与其它出参一致。
+     */
+    public List<TagView> listByPost(Long postId) {
+        return tagMapper.selectByPostId(postId).stream()
+                .map(TagView::from)
+                .toList();
+    }
+
+    /**
      * 把这条帖子的**每个标签**的使用次数都调整 {@code delta}（不改关联）。
      *
      * <p>用在"上下架"上：帖子从公开列表消失时，它给各标签贡献的那一篇也该消失——

@@ -4,6 +4,7 @@ import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.forum.content.entity.Post;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 帖子详情页的形状。
@@ -38,11 +39,13 @@ public record PostDetail(
         int collectCount,
         boolean liked,
         boolean collected,
+        List<TagView> tags,
         LocalDateTime createTime,
         LocalDateTime updateTime
 ) {
 
-    public static PostDetail from(Post post, UserBrief author, boolean liked, boolean collected) {
+    public static PostDetail from(Post post, UserBrief author,
+                                  boolean liked, boolean collected, List<TagView> tags) {
         return new PostDetail(
                 post.getId(),
                 post.getTitle(),
@@ -58,6 +61,10 @@ public record PostDetail(
                 post.getCollectCount(),
                 liked,
                 collected,
+                // 兜一层 null：list 类型的字段一旦序列化成 `"tags": null`，
+                // 前端每个用到它的地方都得写 `|| []`——漏一处就是一次白屏。
+                // 在这一个边界上归一成空列表，比让所有调用方都记得判空便宜。
+                tags == null ? List.of() : tags,
                 post.getCreateTime(),
                 post.getUpdateTime());
     }

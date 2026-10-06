@@ -161,7 +161,8 @@ public class PostService {
         // 未登录时 viewerId 为 null，InteractionService 会直接返回 false 且**不查库**
         return PostDetail.from(post, author,
                 interactionService.liked(id, viewerId),
-                interactionService.collected(id, viewerId));
+                interactionService.collected(id, viewerId),
+                tagService.listByPost(id));
     }
 
     /**
