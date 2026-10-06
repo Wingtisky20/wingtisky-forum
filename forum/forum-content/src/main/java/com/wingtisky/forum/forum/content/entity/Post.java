@@ -50,6 +50,17 @@ public class Post {
     /** 逻辑删除：0 未删 / 1 已删。与 {@code status} 分开——见 {@code db/V2__init_content.sql} 的说明。 */
     private Integer deleted;
 
+    /**
+     * 是否已被版主下架。
+     *
+     * <p>与 {@link #isVisible()} 的区别：后者是"对外可见吗"（把下架与删除合并成一个结论），
+     * 而这个是"具体因为什么不可见"。详情响应要用它告诉作者"你这篇被下架了"——
+     * 只说"看不见"而不说原因，作者仍然不知道发生了什么。
+     */
+    public boolean isOffline() {
+        return status != null && status == STATUS_OFFLINE;
+    }
+
     /** 是否正常可见（未被下架、未被删除）。 */
     public boolean isVisible() {
         return status != null && status == STATUS_PUBLISHED

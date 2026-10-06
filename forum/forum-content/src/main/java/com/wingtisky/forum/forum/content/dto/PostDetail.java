@@ -17,6 +17,11 @@ import java.time.LocalDateTime;
  * @param liked  **当前登录的人**点过赞吗。未登录时恒为 {@code false}——
  *               所以前端在未登录时不能靠它判断"这条帖子没人点赞"
  * @param collected 同上，收藏
+ * @param offline **这条帖子已被版主下架**。
+ *                对别人恒为 {@code false}——他们根本打不开（见 {@code PostService.visibleTo}）。
+ *                它存在的唯一目的是：**让作者知道自己那篇去哪了**。
+ *                没有它的话，"作者仍能打开自己的帖子"这条规则只做了一半——
+ *                他打开了，但看到的和正常帖子一模一样，仍然不知道发生了什么。
  */
 public record PostDetail(
         Long id,
@@ -26,6 +31,7 @@ public record PostDetail(
         UserBrief author,
         boolean top,
         boolean featured,
+        boolean offline,
         int viewCount,
         int likeCount,
         int commentCount,
@@ -45,6 +51,7 @@ public record PostDetail(
                 author,
                 post.getTopFlag() == 1,
                 post.getFeaturedFlag() == 1,
+                post.isOffline(),
                 post.getViewCount(),
                 post.getLikeCount(),
                 post.getCommentCount(),

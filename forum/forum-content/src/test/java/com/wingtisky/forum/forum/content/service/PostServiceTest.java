@@ -439,14 +439,19 @@ class PostServiceTest {
         }
 
         @Test
-        @DisplayName("★ 被下架的帖子：**作者本人仍然看得到**（否则他不知道帖子去哪了）")
+        @DisplayName("★ 被下架的帖子：**作者本人仍然看得到**，且响应里明确标出「已被下架」")
         void offlinePostIsVisibleToItsAuthor() {
             Post p = offlinePost(1L, 10L);
             p.setContent("正文");
             when(postMapper.selectById(1L)).thenReturn(p);
             when(userQueryService.findBrief(10L)).thenReturn(Optional.empty());
 
-            assertThat(postService.getDetail(1L, 10L, false).title()).isEqualTo("被下架的帖子");
+            PostDetail detail = postService.getDetail(1L, 10L, false);
+
+            assertThat(detail.title()).isEqualTo("被下架的帖子");
+            // 少了这个字段，"作者仍能打开"就只做了一半——他打开了，
+            // 但看到的和正常帖子一模一样，仍然不知道发生了什么
+            assertThat(detail.offline()).as("要告诉作者这篇被下架了").isTrue();
         }
 
         @Test
@@ -458,6 +463,17 @@ class PostServiceTest {
             when(userQueryService.findBrief(10L)).thenReturn(Optional.empty());
 
             assertThat(postService.getDetail(1L, 999L, true).title()).isEqualTo("被下架的帖子");
+        }
+
+        @Test
+        @DisplayName("正常的帖子，响应里 offline 为 false")
+        void publishedPostIsNotMarkedOffline() {
+            Post p = post(1L, 10L, "正常帖子");
+            p.setContent("正文");
+            when(postMapper.selectById(1L)).thenReturn(p);
+            when(userQueryService.findBrief(anyLong())).thenReturn(Optional.empty());
+
+            assertThat(postService.getDetail(1L, null, false).offline()).isFalse();
         }
     }
 
