@@ -65,6 +65,8 @@ class TwoLevelCacheTest {
     private StringRedisTemplate redis;
     private RLock lock;
     private RedissonClient redisson;
+    private LocalCache localCache;
+    private CacheEvictionBroadcaster broadcaster;
     private TwoLevelCache cache;
 
     /** 哪些 key 被以什么 TTL 写进了"L2"。 */
@@ -102,7 +104,13 @@ class TwoLevelCacheTest {
         redisson = mock(RedissonClient.class);
         when(redisson.getLock(anyString())).thenReturn(lock);
 
-        cache = new TwoLevelCache(redis, objectMapper(), redisson);
+        // 每个用例一份全新的 L1，否则上一个用例留下的条目会渗进来
+        localCache = new LocalCache();
+        // 广播单独有一整个测试类守着（CacheEvictionBroadcasterTest），
+        // 这里只需要它别抛异常——所以用 mock，不重复测它
+        broadcaster = mock(CacheEvictionBroadcaster.class);
+
+        cache = newCacheWith(lock);
     }
 
     @Test
@@ -325,9 +333,10 @@ class TwoLevelCacheTest {
     }
 
     private TwoLevelCache newCacheWith(RLock customLock) {
-        RedissonClient client = mock(RedissonClient.class);
-        when(client.getLock(anyString())).thenReturn(customLock);
-        return new TwoLevelCache(redis, objectMapper(), client);
+        // 复用同一个 redisson mock：另建一个的话，"锁键推导"那条用例里的
+        // verify(redisson) 验的是另一个对象，会静静地验不到东西
+        when(redisson.getLock(anyString())).thenReturn(customLock);
+        return new TwoLevelCache(redis, objectMapper(), redisson, localCache, broadcaster);
     }
 
     private RLock alwaysGrantedLock() {

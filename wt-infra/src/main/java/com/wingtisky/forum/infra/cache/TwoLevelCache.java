@@ -2,9 +2,6 @@ package com.wingtisky.forum.infra.cache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.Expiry;
 import com.wingtisky.forum.infra.redis.RedisKey;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -15,6 +12,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
@@ -31,10 +29,10 @@ import java.util.function.Supplier;
  * <p><b>防击穿已经做在里面了</b>（回源那一步用 Redisson 锁串起来，锁内再 double-check）：
  * 热点 key 刚过期的一瞬间，只有抢到锁的那个请求会去回源，其余的人等它。
  *
- * <p><b>它现在还不做一件事</b>：跨节点的失效广播（发布订阅清其它节点的 L1）—— Task 4。
- * 所以此刻的 {@link #evict} 只清本机的两层，别的节点要靠自己 L1 的过期时间兜底
- * （这也是 L1 的 TTL 设得比 L2 短得多的原因之一）。
- * **这不是遗漏，是刻意的施工顺序**：一次只引入一个会失效的机制，坏了好定位。
+ * <p><b>三件事都齐了</b>：防击穿（下面第 ③ 步的锁）、防穿透（第 ① 步的墓碑）、
+ * 以及跨节点失效（{@link #evict} 里的广播）。L1 由 {@link LocalCache} 持有——
+ * 它被提出来单独做一个组件，正是因为广播要在"收到消息时"清本进程的 L1，
+ * 而那一刻手里并没有哪个具体的缓存对象。
  *
  * <h3>两个不显眼但必须做对的地方</h3>
  *
@@ -68,13 +66,11 @@ public class TwoLevelCache {
     /** L1 里表示同样的意思——Caffeine 不接受 null 作为值。 */
     private static final Object NULL_HOLDER = new Object();
 
-    /** L1 的条目上限。它只是防"key 基数失控"把内存吃掉，不是淘汰策略的核心。 */
-    private static final long L1_MAX_ENTRIES = 10_000L;
-
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final RedissonClient redisson;
-    private final Cache<String, Object> l1;
+    private final LocalCache localCache;
+    private final CacheEvictionBroadcaster broadcaster;
 
     /**
      * 回源次数。**存在的唯一目的是让「100 并发只有 1 次回源」这条闸门可被证伪** ——
@@ -89,17 +85,13 @@ public class TwoLevelCache {
      * ——因为它压根不起来 Spring 上下文（这条是 2026-10-06 实测踩到的）。
      */
     @Autowired
-    public TwoLevelCache(StringRedisTemplate redis, ObjectMapper json, RedissonClient redisson) {
-        this(redis, json, redisson, defaultL1());
-    }
-
-    /** 供测试注入一个可控的 L1（比如换成很小的上限，或读它的命中统计）。 */
-    TwoLevelCache(StringRedisTemplate redis, ObjectMapper json, RedissonClient redisson,
-                  Cache<String, Object> l1) {
+    public TwoLevelCache(StringRedisTemplate redis, ObjectMapper json, RedissonClient redisson,
+                         LocalCache localCache, CacheEvictionBroadcaster broadcaster) {
         this.redis = redis;
         this.json = json;
         this.redisson = redisson;
-        this.l1 = l1;
+        this.localCache = localCache;
+        this.broadcaster = broadcaster;
     }
 
     /**
@@ -116,7 +108,7 @@ public class TwoLevelCache {
      */
     public <V> V get(String key, Class<V> type, CachePolicy policy, Supplier<V> loader) {
         // ① L1：进程内，最快的一档
-        Object local = l1.getIfPresent(key);
+        Object local = localCache.get(key);
         if (local != null) {
             return local == NULL_HOLDER ? null : type.cast(local);
         }
@@ -164,8 +156,11 @@ public class TwoLevelCache {
      * 在那之前，其它节点靠自己的 L1 过期时间兜底（这也是 L1 的 TTL 设短的原因之一）。
      */
     public void evict(String key) {
-        l1.invalidate(key);
+        localCache.invalidate(key);
         redis.delete(key);
+        // 广播给**别的节点**，让它们也清掉自己那份 L1。
+        // 少了这一步，多节点部署下别的节点会一直拿旧值供数，直到自己的 L1 过期。
+        broadcaster.broadcast(key);
     }
 
     /** 累计回源次数。给闸门实验用（见类注释）。 */
@@ -270,17 +265,8 @@ public class TwoLevelCache {
         return null;
     }
 
-    private void putL1(String key, Object value, java.time.Duration ttl) {
-        // 用可变过期时间：L1 的 TTL 与 L2 不同档（前者短得多，是发布订阅丢消息时的兜底）。
-        // 若哪天这个缓存不是用 expireAfter(Expiry) 建的，这里会拿不到 expireVariably——
-        // 那就退回普通 put（靠 defaultL1 里的兜底时长），而不是让调用方挂在异常上。
-        var variably = l1.policy().expireVariably();
-        if (variably.isPresent()) {
-            variably.get().put(key, value, ttl);
-        } else {
-            log.warn("L1 未启用可变过期，[{}] 退化为默认 TTL", key);
-            l1.put(key, value);
-        }
+    private void putL1(String key, Object value, Duration ttl) {
+        localCache.putWithTtl(key, value, ttl);
     }
 
     private String serialize(Object value) {
@@ -304,35 +290,5 @@ public class TwoLevelCache {
             redis.delete(key);
             return null;
         }
-    }
-
-    private static Cache<String, Object> defaultL1() {
-        return Caffeine.newBuilder()
-                .maximumSize(L1_MAX_ENTRIES)
-                // recordStats()：闸门实验要读命中率，没有它就只剩"我觉得应该挺高的"
-                .recordStats()
-                .expireAfter(new Expiry<String, Object>() {
-                    @Override
-                    public long expireAfterCreate(String key, Object value, long currentTime) {
-                        // 实际写入都会走 putL1 的 expireVariably().put(key, value, ttl)，
-                        // 那个时长会覆盖这里；这个返回值只是"忘了指定时"的兜底。
-                        return java.time.Duration.ofSeconds(60).toNanos();
-                    }
-
-                    @Override
-                    public long expireAfterUpdate(String key, Object value,
-                                                  long currentTime, long currentDuration) {
-                        return currentDuration;
-                    }
-
-                    @Override
-                    public long expireAfterRead(String key, Object value,
-                                                long currentTime, long currentDuration) {
-                        // 读不续期：访问频繁的 key 一直不回源看起来很划算，
-                        // 但那样它永远不会去拿新数据，等于把缓存变成了事实上的权威副本。
-                        return currentDuration;
-                    }
-                })
-                .build();
     }
 }
