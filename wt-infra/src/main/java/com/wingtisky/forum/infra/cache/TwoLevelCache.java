@@ -81,6 +81,15 @@ public class TwoLevelCache {
     private final AtomicLong loadCount = new AtomicLong();
 
     /**
+     * L2 命中的次数。与 {@link #loadCount} 同一个用途：让"命中率"是一个**读得出来的数**，
+     * 而不是一个形容词（设计 §9.1 要求实验记录 L1 / L2 命中率与回源率）。
+     *
+     * <p>L1 的命中率不需要在这里数——Caffeine 自己带着（{@code LocalCache.stats()}）。
+     * 这里只补 L2 这一档。
+     */
+    private final AtomicLong l2HitCount = new AtomicLong();
+
+    /**
      * 必须显式标 {@code @Autowired}：下面还有一个给测试用的构造器，
      * 一个类有**两个**构造器时 Spring 不再猜，会直接去找无参构造器然后报
      * "No default constructor found"。这个错只在**启动**时才炸，单测发现不了
@@ -201,9 +210,19 @@ public class TwoLevelCache {
         return loadCount.get();
     }
 
+    /** 累计 L2 命中次数。给闸门实验用（见类注释与设计 §9.1）。 */
+    public long l2HitCount() {
+        return l2HitCount.get();
+    }
+
     /** 把回源计数清零。实验要先清零再打流量，否则读数里混着之前跑的量。 */
     public void resetLoadCount() {
         loadCount.set(0L);
+    }
+
+    /** 把 L2 命中计数清零。理由同上。 */
+    public void resetL2HitCount() {
+        l2HitCount.set(0L);
     }
 
     // ---------- 内部 ----------
@@ -225,6 +244,9 @@ public class TwoLevelCache {
         }
         if (NULL_SENTINEL.equals(raw)) {
             putL1(key, NULL_HOLDER, policy.nullTtl());
+            // 墓碑也算一次命中：它同样让这一次读**没有压到数据库上**，
+            // 而"命中率"这道闸门问的正是"挡住了多少次回源"
+            l2HitCount.incrementAndGet();
             return new L2Hit<>(null);
         }
         V value = deserialize(key, raw, type);
@@ -234,6 +256,7 @@ public class TwoLevelCache {
             return null;
         }
         putL1(key, value, policy.l1Ttl());
+        l2HitCount.incrementAndGet();
         return new L2Hit<>(value);
     }
 
