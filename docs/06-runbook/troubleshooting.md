@@ -436,3 +436,69 @@ curl -X POST $BASE/api/posts -H 'Content-Type: application/json' \
 从 IDEA 发出去一直是好的，原因就在这里——IDEA 用 UTF-8 发。
 
 **耗时**：约 10 分钟
+
+---
+
+## 2026-10-06 · 151 个单元测试只跑了 56 个，而构建显示 `BUILD SUCCESS`
+
+**现象**：`mvn -B test` 干净地打印 `BUILD SUCCESS`。但项目实际有 **151** 个单元测试，
+真正执行的只有 **56** 个。被跳过的测试类在报告里写着 `Tests run: 0`，
+读起来像"这个类里没有测试"，**不报任何错**。
+
+被跳过的正好是最要紧的那块：`forum-content` 的 94 个测试（M3 要改的内容域）
+一个都没跑，`forum-user` 也少跑了 15 个。
+
+**怎么发现的**：M3 Task 1 的验证要求核对测试数（计划里定的基线是 151）。
+如果那条要求写成"看到 BUILD SUCCESS 即可"，这个坑会被一路带下去。
+
+**根因**：surefire 默认 `useManifestOnlyJar=true`——为了不把命令行撑爆，
+它把"要用哪些依赖"写成一个**临时 manifest JAR** 交给 fork 出的测试进程。
+该文件落在系统临时目录，本机是 `C:\Users\w\AppData\Local\Temp`，
+而**项目与 Maven 仓库都在 D 盘**。跨盘符时这份清单生成不出来，
+surefire 自己的 dump 文件里留着这句话：
+
+```
+Boot Manifest-JAR contains absolute paths in classpath ...
+'other' has different root
+```
+
+于是 fork 进程拿到的 classpath 是断的 → JUnit 在**发现阶段**就抛
+`TestEngine with ID 'junit-jupiter' failed to discover tests` →
+surefire 把"发现失败"记成"这个类没有测试" → **构建照常成功**。
+
+**这不是新坑**：`target/surefire-reports/` 下的 dump 文件日期是 **2026-10-05**
+（M2 期间），说明它已经存在了一段时间。
+
+**解决**：父 `pom.xml` 的 surefire 配置里关掉它。
+
+```xml
+<useManifestOnlyJar>false</useManifestOnlyJar>
+```
+
+改完实测：`mvn -B clean test` → **151 个全部执行**，`BUILD SUCCESS`
+（wt-common 11 + forum-user 41 + forum-content 94 + app 5）。
+
+**代价**：classpath 改用命令行传递。Windows 命令行有长度上限（约 32K 字符），
+依赖极多时可能反过来报"命令行过长"。本项目远未触及，Linux/CI 不受影响。
+
+**将来若以别的面貌复现，这样定位**：跑完测试后，看报告里**有没有 `Tests run: 0` 的类**；
+有，就去该模块的 `target/surefire-reports/` 翻 `*.dumpstream`。
+
+> ### 排查过程中我走错的一步（留着，因为它更容易犯）
+>
+> 我先用 `mvn -B test -pl forum/forum-content -Dtest=PostServiceTest` 单独跑一个模块，
+> 报出 `NoClassDefFoundError: com/wingtisky/forum/common/exception/BizException`，
+> 一度以为找到了根因。
+>
+> 其实那只是**上面 2026-09-29 那条 `-am` 的坑**：`-pl` 不带 `-am` 时，
+> Maven 去本地仓库取上游模块，拿到的是旧版本。**同一份文档里早就写过这条。**
+>
+> 教训：**单模块复现出来的错误，不能直接当根因**——先确认它是不是构建方式造成的假象。
+> 换完整 reactor 重跑，那条 `NoClassDefFoundError` 就消失了。
+
+**为什么这条值得记**：它的失败模式是**静默的成功**——构建绿、无报错、
+测试报告文件也在（只是写着 0）。这和 2026-09-29「`-D` 覆盖不动 POM 字面量」那条
+是同一类：**判断依据必须是"数对不对"，不是"绿不绿"。**
+
+**还没做的一件事**：给构建加一道**测试数下限断言**，让"静默少跑"直接变成构建失败。
+本期没做（它属于构建逻辑，想和 M10 的工具链整理一起考虑）。
