@@ -151,3 +151,239 @@ Content-Type: application/json
   "username": "rate_limit_probe",
   "password": "not-the-real-password"
 }
+
+### ============================================================
+### M2 冒烟测试
+###
+### ⚠️ 顺序同样有依赖：
+###    - 先跑 [[login]]（第 4 条）拿到 {{access}}，M2 的写操作都要它
+###    - **第 21 条（用户名维度限流）连打会把额度用光**，
+###      跑完之后要么等 1 分钟，要么换一个用户名
+###    - 第 25 条要一个**版主账号**。默认脚本里没有，
+###      跑之前用 SQL 给某个用户授一下（见该条注释）
+### ============================================================
+
+### 16. 发帖（带标签）
+### 期望：200，data 是新帖子的 id（数字）
+### 注意 tags 里刻意给了大小写不同的同一个词——**它只会产生一个标签**
+POST {{host}}/api/posts
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "title": "M2 冒烟：第一篇帖子",
+  "content": "第一行\n\n第二行   有连续空格。摘要会被压成一行。",
+  "tags": ["smoke", "Smoke", "冒烟标签"]
+}
+
+> {% client.global.set("postId", response.body.data); %}
+
+### 17. 【反面】不带令牌发帖
+### 期望：401，code=A0002
+POST {{host}}/api/posts
+Content-Type: application/json
+
+{
+  "title": "匿名帖",
+  "content": "不该成功"
+}
+
+### 18. 帖子列表（**公开接口，不带令牌**）
+### 期望：200；items 里有刚发的那篇，且**它的摘要里没有换行**
+GET {{host}}/api/posts?page=1&size=10
+
+### 19. 帖子详情（公开）
+### 期望：200；正文里的换行**原样保留**；tags 里有标签
+### 连跑两次，第二次的 viewCount 应当比第一次大 1
+GET {{host}}/api/posts/{{postId}}
+
+### 20. 改帖：**标题传成和原来一模一样的值**
+### 期望：200
+### ⚠️ 这是回归用例。用 UPDATE 的返回行数判断"帖子存不存在"的写法，
+###    在这里会返回 0 行、进而误报 404"帖子不存在"——而用户只是没改标题
+PATCH {{host}}/api/posts/{{postId}}
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "title": "M2 冒烟：第一篇帖子"
+}
+
+### 21. 【反面】改一条不存在的帖子
+### 期望：403（鉴权先于业务判断——**不告诉你这个 id 存不存在**）
+PATCH {{host}}/api/posts/9999999
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "title": "随便改改"
+}
+
+### 22. 发一条顶层评论
+### 期望：200，data 是评论 id
+POST {{host}}/api/posts/{{postId}}/comments
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "content": "顶层评论"
+}
+
+> {% client.global.set("commentId", response.body.data); %}
+
+### 23. 回复那条评论
+### 期望：200
+POST {{host}}/api/posts/{{postId}}/comments
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "parentId": {{commentId}},
+  "content": "回复顶层评论"
+}
+
+> {% client.global.set("replyId", response.body.data); %}
+
+### 24. **回复那条回复**（两级模型的边界）
+### 期望：200，且它**被拍平到同一楼**——列表里它出现在第一条评论的 replies 里，
+###      不会自成一楼（这是 ADR-0018 定义的"两级"，不是错误）
+POST {{host}}/api/posts/{{postId}}/comments
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "parentId": {{replyId}},
+  "content": "回复一条回复"
+}
+
+### 25. 评论列表（公开）
+### 期望：200；顶层评论 1 条，它下面有 **2 条回复**（第 23、24 条都在同一楼）
+GET {{host}}/api/posts/{{postId}}/comments
+
+### 26. 【反面】跨帖回复
+### 期望：400，code=A0001，message 里点明"不能回复其他帖子下的评论"
+### 前置：得先有第二条帖子（拿别的帖子下的评论 id 来回复）
+POST {{host}}/api/posts/{{postId}}/comments
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "parentId": 9999999,
+  "content": "回复一条不存在的评论"
+}
+
+### 27. 点赞 —— **连着跑 3 次**
+### 期望：3 次都 200，且详情里的 likeCount **只加 1**
+### ⚠️ 这是幂等用例。少了"真的插进去了才 +1"那个判断，连点 3 次计数就是 3，
+###    而且**不会有任何报错**
+PUT {{host}}/api/posts/{{postId}}/like
+Authorization: Bearer {{access}}
+
+### 28. 再看一次详情，核对 likeCount 与 liked
+### 期望：liked=true，likeCount 与第 19 条相比只多 1
+GET {{host}}/api/posts/{{postId}}
+Authorization: Bearer {{access}}
+
+### 29. 取消点赞 —— 也连跑 2 次
+### 期望：都 200，且计数**只减 1**（第二次本来就没点过，不该再减）
+DELETE {{host}}/api/posts/{{postId}}/like
+Authorization: Bearer {{access}}
+
+### 30. 标签列表（公开）
+### 期望：200；能看到 "smoke" 与 "冒烟标签"，
+###      且**只有一行 smoke**——第 16 条里给的 "Smoke" 没有产生第二个标签
+GET {{host}}/api/tags?limit=50
+
+### 31. 按标签筛帖子
+### 期望：200；total 是带这个标签的帖子数（把 tagId 换成第 30 条里查到的 id）
+GET {{host}}/api/posts?tagId=1&page=1&size=10
+
+### 32. 【反面】普通用户调后台接口
+### 期望：403，code=A0003
+### ⚠️ 这一条是整个后台治理最要紧的对照：权限写错的表现是
+###    "某个治理接口对所有人敞开"，而它**不会报错**
+PATCH {{host}}/api/admin/posts/{{postId}}
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "topFlag": true
+}
+
+### 33. 版主置顶 + 加精
+### 期望：200，且**数据库里真的改了**（别只看 HTTP 200——它可能什么都没干）：
+###   SELECT top_flag, featured_flag FROM t_post WHERE id = <postId>;
+### 前置：先给一个账号授版主，**然后重新登录**（角色是签发令牌时写进去的）
+###   INSERT IGNORE INTO t_user_role (user_id, role_id)
+###     SELECT <userId>, id FROM t_role WHERE code = 'MODERATOR';
+PATCH {{host}}/api/admin/posts/{{postId}}
+Authorization: Bearer {{moderatorAccess}}
+Content-Type: application/json
+
+{
+  "topFlag": true,
+  "featuredFlag": true
+}
+
+### 34. 版主下架
+### 期望：200，status 变成 1；且**标签的帖子数减 1**
+PATCH {{host}}/api/admin/posts/{{postId}}
+Authorization: Bearer {{moderatorAccess}}
+Content-Type: application/json
+
+{
+  "status": 1
+}
+
+### 35. 下架后的可见性（三条连着看）
+### 期望：匿名 **404**（当作不存在，而不是 403——403 等于确认这个 id 存在）
+GET {{host}}/api/posts/{{postId}}
+
+### 36. 期望：作者自己 **200**，且响应里 `"offline": true`
+### （没有 offline 字段的话，作者打开了也看不出这篇被下架了）
+GET {{host}}/api/posts/{{postId}}
+Authorization: Bearer {{access}}
+
+### 37. 恢复上架
+### 期望：200；标签的帖子数加回来；匿名再查又是 200
+PATCH {{host}}/api/admin/posts/{{postId}}
+Authorization: Bearer {{moderatorAccess}}
+Content-Type: application/json
+
+{
+  "status": 0
+}
+
+### 38. 【反面】改帖时什么都不给
+### 期望：400，code=A0001（不静默返回成功——"无操作的成功"比报错更难查）
+PATCH {{host}}/api/posts/{{postId}}
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{}
+
+### 39. 限流：用户名维度
+### 把下面这个请求连跑 6 次（密码故意错）
+### 期望：**前 5 次 401、第 6 次起 429**
+### 反面对照：把 username 换一个再打 → 仍然是 401（证明两个账号不共用一个计数器）
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "username_limit_probe",
+  "password": "wrong-password"
+}
+
+### 40. 限流：写接口比读接口严（按方法分档）
+### 连发 11 次帖子 → 期望**前 10 次 200、第 11 次 429**
+### 紧接着再跑第 18 条（GET 列表）→ 期望**仍然 200**
+### ⚠️ 这一对才是关键：读与写各自一个计数器。若限流键里没带请求方法，
+###    发帖用掉的额度会把读也一起限掉，而那看起来完全正常
+POST {{host}}/api/posts
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{
+  "title": "限流探测",
+  "content": "body"
+}
