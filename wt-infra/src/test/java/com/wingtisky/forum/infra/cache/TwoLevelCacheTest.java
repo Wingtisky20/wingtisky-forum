@@ -6,22 +6,33 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -40,9 +51,10 @@ class TwoLevelCacheTest {
     private static final Duration L2_TTL = Duration.ofMinutes(5);
     private static final Duration JITTER = Duration.ofSeconds(60);
     private static final Duration NULL_TTL = Duration.ofSeconds(60);
+    private static final Duration LOCK_WAIT = Duration.ofMillis(200);
 
     private static final CachePolicy POLICY =
-            new CachePolicy(L1_TTL, L2_TTL, JITTER, NULL_TTL);
+            new CachePolicy(L1_TTL, L2_TTL, JITTER, NULL_TTL, LOCK_WAIT);
 
     private static final String KEY = "wt:cache:post:detail:1";
 
@@ -51,6 +63,8 @@ class TwoLevelCacheTest {
     }
 
     private StringRedisTemplate redis;
+    private RLock lock;
+    private RedissonClient redisson;
     private TwoLevelCache cache;
 
     /** 哪些 key 被以什么 TTL 写进了"L2"。 */
@@ -60,8 +74,10 @@ class TwoLevelCacheTest {
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
-        l2 = new HashMap<>();
-        writtenTtl = new HashMap<>();
+        // 用并发容器：下面有一组**多线程**的用例，用 HashMap 会被并发写坏，
+        // 而那种坏是偶发的、看着像业务 bug
+        l2 = new ConcurrentHashMap<>();
+        writtenTtl = new ConcurrentHashMap<>();
 
         ValueOperations<String, String> ops = mock(ValueOperations.class);
         when(ops.get(anyString())).thenAnswer(inv -> l2.get(inv.getArgument(0)));
@@ -80,7 +96,13 @@ class TwoLevelCacheTest {
             return Boolean.TRUE;
         }).when(redis).delete(anyString());
 
-        cache = new TwoLevelCache(redis, objectMapper());
+        // 默认的锁：**来者不拒，立刻到手**——这样其余用例测的是缓存逻辑本身，
+        // 不会被锁的行为干扰。锁自己的用例在下面，会换成别的假锁。
+        lock = alwaysGrantedLock();
+        redisson = mock(RedissonClient.class);
+        when(redisson.getLock(anyString())).thenReturn(lock);
+
+        cache = new TwoLevelCache(redis, objectMapper(), redisson);
     }
 
     @Test
@@ -213,7 +235,148 @@ class TwoLevelCacheTest {
         assertThat(l2.get(KEY)).isNotEqualTo("这不是合法的 JSON");
     }
 
+    // ---------- 防击穿（Task 3） ----------
+
+    @Test
+    @DisplayName("【防击穿】20 个并发撞上同一个空缓存：回源**恰好 1 次**")
+    void concurrentMissesLoadOnlyOnce() throws Exception {
+        cache = newCacheWith(serializingLock());
+
+        long loads = hammer(20, () -> sample("唯一的一份"));
+
+        assertThat(loads)
+                .as("20 个并发只应回源 1 次——这就是防击穿要的效果")
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("【反面】锁失去互斥（人人都能进临界区）：同样 20 个并发，回源**远多于 1 次**")
+    void withoutMutualExclusionEveryRequestLoadsItsOwn() throws Exception {
+        cache = newCacheWith(alwaysGrantedLock());
+
+        long loads = hammer(20, () -> sample("每人一份"));
+
+        assertThat(loads)
+                .as("这一条才是上面那条的证据：只报「回源 1 次」说明不了是锁起的作用，"
+                        + "让锁不互斥之后数字必须变差")
+                .isGreaterThan(1);
+    }
+
+    @Test
+    @DisplayName("抢不到锁、轮询也等不到别人写 → **降级回源**：拿得到值，不卡死也不报错")
+    void degradesToLoadingInsteadOfHanging() {
+        cache = newCacheWith(neverGrantedLock());
+
+        Sample value = cache.get(KEY, Sample.class, POLICY, () -> sample("降级拿到的"));
+
+        assertThat(value.title()).isEqualTo("降级拿到的");
+        assertThat(cache.loadCount()).as("降级那一次也要算进回源次数").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("【一个反直觉的事实】「抢不到锁」这条路上，还有「轮询 L2」在兜底")
+    void waitingForL2AlsoPreventsDuplicateLoads() throws Exception {
+        // 这一条是**测试写错之后才发现的**，值得留着：
+        //
+        // 我原本把"永远抢不到锁"当成防击穿的反面，以为那样 20 个并发会各自回源一次。
+        // 实测不是——回源仍然是 1 次。原因是"抢不到锁"之后还有⑤那条路：
+        // 等一会儿、轮询 L2，而先拿到锁的那个人会把值写进去。
+        //
+        // 所以防击穿其实有**两道**：锁（串行化）+ 等锁期间的轮询。
+        // 真正的反面必须把两道都拿掉（见上面那条"失去互斥"）。
+        cache = newCacheWith(neverGrantedLock());
+
+        long loads = hammer(20, () -> sample("靠轮询拿到的"));
+
+        assertThat(loads)
+                .as("抢不到锁时，轮询 L2 仍会把大部分并发请求拦住")
+                .isLessThan(20);
+    }
+
+    @Test
+    @DisplayName("锁键由缓存键推导而来——两者永远一一对应，不会各写各的")
+    void lockKeyIsDerivedFromCacheKey() {
+        cache.get(KEY, Sample.class, POLICY, () -> sample("v"));
+
+        // KEY = wt:cache:post:detail:1  →  锁键 = wt:lock:cache:post:detail:1
+        verify(redisson).getLock("wt:lock:cache:post:detail:1");
+    }
+
     // ---------- 辅助 ----------
+
+    /** 让 N 个线程同时撞同一个 key，返回累计的回源次数。 */
+    private long hammer(int threads, Supplier<Sample> answer) throws Exception {
+        Sample expected = answer.get();
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        List<Future<Sample>> futures = new ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            futures.add(pool.submit(() -> {
+                start.await();
+                return cache.get(KEY, Sample.class, POLICY, answer);
+            }));
+        }
+        start.countDown();     // 一起放出去，尽量制造同时未命中的场面
+        for (Future<Sample> future : futures) {
+            assertThat(future.get(10, TimeUnit.SECONDS)).isEqualTo(expected);
+        }
+        pool.shutdown();
+        return cache.loadCount();
+    }
+
+    private TwoLevelCache newCacheWith(RLock customLock) {
+        RedissonClient client = mock(RedissonClient.class);
+        when(client.getLock(anyString())).thenReturn(customLock);
+        return new TwoLevelCache(redis, objectMapper(), client);
+    }
+
+    private RLock alwaysGrantedLock() {
+        RLock granted = mock(RLock.class);
+        try {
+            when(granted.tryLock(anyLong(), any(TimeUnit.class))).thenReturn(true);
+        } catch (InterruptedException e) {
+            throw new IllegalStateException(e);
+        }
+        when(granted.isHeldByCurrentThread()).thenReturn(true);
+        return granted;
+    }
+
+    private RLock neverGrantedLock() {
+        RLock denied = mock(RLock.class);
+        try {
+            when(denied.tryLock(anyLong(), any(TimeUnit.class))).thenReturn(false);
+        } catch (InterruptedException e) {
+            throw new IllegalStateException(e);
+        }
+        return denied;
+    }
+
+    /**
+     * 一把**真的会互斥**的假锁：内部用一个公平的 {@link ReentrantLock}。
+     * 这是"20 个并发只回源 1 次"那条用例能成立的前提——
+     * 用"永远返回 true"的假锁，20 个线程会一起冲进临界区，测出来的就不是防击穿了。
+     */
+    private RLock serializingLock() {
+        ReentrantLock real = new ReentrantLock(true);
+        RLock serialized = mock(RLock.class);
+        try {
+            when(serialized.tryLock(anyLong(), any(TimeUnit.class))).thenAnswer(inv -> {
+                long waitMs = inv.getArgument(0);
+                TimeUnit unit = inv.getArgument(1);
+                return real.tryLock(waitMs, unit);
+            });
+        } catch (InterruptedException e) {
+            throw new IllegalStateException(e);
+        }
+        when(serialized.isHeldByCurrentThread()).thenAnswer(inv -> real.isHeldByCurrentThread());
+        doAnswer(inv -> {
+            if (real.isHeldByCurrentThread()) {
+                real.unlock();
+            }
+            return null;
+        }).when(serialized).unlock();
+        return serialized;
+    }
 
     private Sample sample(String title) {
         return new Sample(1L, title, List.of("Redis", "Caffeine"), LocalDateTime.of(2026, 10, 6, 14, 0));

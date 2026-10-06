@@ -81,6 +81,20 @@ public final class RedisKey {
         return PREFIX + "cache:post:detail:" + postId;
     }
 
+    /**
+     * 回源锁的键：**由缓存键推导出来**，而不是另起一套命名。
+     *
+     * <p>推导而不是手写，是为了让"缓存键 ↔ 锁键"永远一一对应。
+     * 手写两套的话，加缓存时忘了加锁、或者两处拼得不一样，都不会报错——
+     * 只会表现为"锁没起作用"，而那正是最难发现的一类失效（表面一切正常，只是防击穿失效了）。
+     *
+     * <p>例：{@code wt:cache:post:detail:7} → {@code wt:lock:cache:post:detail:7}
+     */
+    public static String cacheLock(String cacheKey) {
+        String bare = cacheKey.startsWith(PREFIX) ? cacheKey.substring(PREFIX.length()) : cacheKey;
+        return PREFIX + "lock:" + bare;
+    }
+
     private static String normalize(String suffix) {
         return suffix.replace('/', '_');
     }

@@ -14,6 +14,10 @@ import org.springframework.test.context.ActiveProfiles;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,9 +47,10 @@ class TwoLevelCacheRedisIntegrationTest {
     private static final Duration L2_TTL = Duration.ofSeconds(100);
     private static final Duration JITTER = Duration.ofSeconds(30);
     private static final Duration NULL_TTL = Duration.ofSeconds(10);
+    private static final Duration LOCK_WAIT = Duration.ofMillis(200);
 
     private static final CachePolicy POLICY =
-            new CachePolicy(L1_TTL, L2_TTL, JITTER, NULL_TTL);
+            new CachePolicy(L1_TTL, L2_TTL, JITTER, NULL_TTL, LOCK_WAIT);
 
     private static final String PREFIX = "wt:cache:post:detail:it:";
 
@@ -120,6 +125,36 @@ class TwoLevelCacheRedisIntegrationTest {
     }
 
     @Test
+    @DisplayName("【防击穿·真 Redisson 锁】20 个并发撞同一个空缓存：回源**恰好 1 次**")
+    void realRedissonLockSerializesLoads() throws Exception {
+        // 单测里那把锁是假的；这一条用的是**真的 RedissonClient + 真的 Redis**——
+        // 它同时验证了两件事：锁真的能互斥，以及 waitForL2 那条路真的接得上。
+        cache.resetLoadCount();
+        String key = PREFIX + "lock";
+
+        int threads = 20;
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        List<Future<String>> futures = new ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            futures.add(pool.submit(() -> {
+                start.await();
+                return cache.get(key, String.class, POLICY, () -> "唯一的一份");
+            }));
+        }
+        start.countDown();
+
+        for (Future<String> future : futures) {
+            assertThat(future.get(20, TimeUnit.SECONDS)).isEqualTo("唯一的一份");
+        }
+        pool.shutdown();
+
+        assertThat(cache.loadCount())
+                .as("20 个并发只应回源 1 次")
+                .isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("L1 的过期时间按条目设置，而非退化成兜底的 60 秒")
     void l1TtlIsAppliedPerEntry() throws InterruptedException {
         // L1 的 TTL 是 30 秒。这条测试给一个 **5 秒**的 L1 TTL，
@@ -130,7 +165,8 @@ class TwoLevelCacheRedisIntegrationTest {
         // 代码会**静静退化成兜底时长**（60 秒）。那时 L1 就成了"消息丢了也不失效"
         // 的脏数据来源，而表面上一切正常。
         CachePolicy shortL1 = new CachePolicy(
-                Duration.ofSeconds(5), Duration.ofSeconds(100), Duration.ZERO, Duration.ofSeconds(5));
+                Duration.ofSeconds(5), Duration.ofSeconds(100), Duration.ZERO,
+                Duration.ofSeconds(5), Duration.ofMillis(200));
         String key = PREFIX + "l1ttl";
 
         cache.get(key, String.class, shortL1, () -> "第一版");

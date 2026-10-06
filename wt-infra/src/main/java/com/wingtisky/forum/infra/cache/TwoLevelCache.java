@@ -5,12 +5,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
+import com.wingtisky.forum.infra.redis.RedisKey;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
@@ -23,13 +28,13 @@ import java.util.function.Supplier;
  * 后者由调用方通过 {@link CachePolicy} 和一个回源函数传进来。
  * 换成 M7 的商品详情，这个类一行都不用改。
  *
- * <p><b>它现在还不做两件事</b>（后面两个 Task 各自加，一次只加一件）：
- * <ul>
- *   <li><b>防击穿</b>（Redisson 锁 + 锁内 double-check）—— Task 3</li>
- *   <li><b>跨节点失效广播</b>（发布订阅清其它节点的 L1）—— Task 4</li>
- * </ul>
- * 所以此刻的 {@link #evict} 只清本机的两层。**这不是遗漏，是刻意的施工顺序**：
- * 一次只引入一个会失效的机制，坏了好定位。
+ * <p><b>防击穿已经做在里面了</b>（回源那一步用 Redisson 锁串起来，锁内再 double-check）：
+ * 热点 key 刚过期的一瞬间，只有抢到锁的那个请求会去回源，其余的人等它。
+ *
+ * <p><b>它现在还不做一件事</b>：跨节点的失效广播（发布订阅清其它节点的 L1）—— Task 4。
+ * 所以此刻的 {@link #evict} 只清本机的两层，别的节点要靠自己 L1 的过期时间兜底
+ * （这也是 L1 的 TTL 设得比 L2 短得多的原因之一）。
+ * **这不是遗漏，是刻意的施工顺序**：一次只引入一个会失效的机制，坏了好定位。
  *
  * <h3>两个不显眼但必须做对的地方</h3>
  *
@@ -68,6 +73,7 @@ public class TwoLevelCache {
 
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
+    private final RedissonClient redisson;
     private final Cache<String, Object> l1;
 
     /**
@@ -83,14 +89,16 @@ public class TwoLevelCache {
      * ——因为它压根不起来 Spring 上下文（这条是 2026-10-06 实测踩到的）。
      */
     @Autowired
-    public TwoLevelCache(StringRedisTemplate redis, ObjectMapper json) {
-        this(redis, json, defaultL1());
+    public TwoLevelCache(StringRedisTemplate redis, ObjectMapper json, RedissonClient redisson) {
+        this(redis, json, redisson, defaultL1());
     }
 
     /** 供测试注入一个可控的 L1（比如换成很小的上限，或读它的命中统计）。 */
-    TwoLevelCache(StringRedisTemplate redis, ObjectMapper json, Cache<String, Object> l1) {
+    TwoLevelCache(StringRedisTemplate redis, ObjectMapper json, RedissonClient redisson,
+                  Cache<String, Object> l1) {
         this.redis = redis;
         this.json = json;
+        this.redisson = redisson;
         this.l1 = l1;
     }
 
@@ -114,32 +122,39 @@ public class TwoLevelCache {
         }
 
         // ② L2：Redis
-        String raw = redis.opsForValue().get(key);
-        if (raw != null) {
-            if (NULL_SENTINEL.equals(raw)) {
-                putL1(key, NULL_HOLDER, policy.nullTtl());
-                return null;
-            }
-            V fromRedis = deserialize(key, raw, type);
-            if (fromRedis != null) {
-                putL1(key, fromRedis, policy.l1Ttl());
-                return fromRedis;
-            }
-            // 反序列化失败已经在 deserialize 里记过日志并清掉了这个 key，
-            // 这里顺着往下走去回源——**缓存坏了不该让读失败**。
+        L2Hit<V> hit = readL2(key, type, policy);
+        if (hit != null) {
+            return hit.value();
         }
 
-        // ③ 回源，然后写回两层
-        loadCount.incrementAndGet();
-        V loaded = loader.get();
-        if (loaded == null) {
-            redis.opsForValue().set(key, NULL_SENTINEL, policy.nullTtl());
-            putL1(key, NULL_HOLDER, policy.nullTtl());
-        } else {
-            redis.opsForValue().set(key, serialize(loaded), policy.nextL2Ttl());
-            putL1(key, loaded, policy.l1Ttl());
+        // ③ 要回源了。先抢锁——**这一步就是防击穿**。
+        //    没有它，热点 key 刚过期的那一瞬间，所有并发请求会同时发现"缓存没了"，
+        //    然后一起冲到数据库上。缓存在最需要它的时候反而失效。
+        RLock lock = redisson.getLock(RedisKey.cacheLock(key));
+        if (tryLock(lock, key, policy)) {
+            try {
+                // ④ double-check：**这一步不能省。**
+                //    在你等锁的这段时间里，前一个拿到锁的线程很可能已经把值写进去了。
+                //    不重查的话，所有排队的请求会**依次各回源一次**——锁等于白加。
+                L2Hit<V> again = readL2(key, type, policy);
+                if (again != null) {
+                    return again.value();
+                }
+                return loadAndFill(key, policy, loader);
+            } finally {
+                unlock(lock, key);
+            }
         }
-        return loaded;
+
+        // ⑤ 没抢到锁：等一会儿，看拿到锁的那个人有没有把值写进去
+        L2Hit<V> waited = waitForL2(key, type, policy);
+        if (waited != null) {
+            return waited.value();
+        }
+
+        // ⑥ 等不到就**降级回源**。宁可多查一次库，也不能把请求卡死——
+        //    这里若改成抛错或返回空，一次偶发的锁竞争就会变成用户可见的故障。
+        return loadAndFill(key, policy, loader);
     }
 
     /**
@@ -164,6 +179,96 @@ public class TwoLevelCache {
     }
 
     // ---------- 内部 ----------
+
+    /**
+     * 查 L2 的结果。用一个类型把两种"没有值"分开——
+     * 返回 {@code null} 是"L2 里没有这个键"，返回 {@code L2Hit} 且其 value 为
+     * {@code null} 是"L2 里有一枚墓碑"（即：这个对象确实不存在）。
+     * 两者后续的处理完全不同（前者要回源，后者要直接对外说"没有"）。
+     */
+    private record L2Hit<V>(V value) {
+    }
+
+    @Nullable
+    private <V> L2Hit<V> readL2(String key, Class<V> type, CachePolicy policy) {
+        String raw = redis.opsForValue().get(key);
+        if (raw == null) {
+            return null;
+        }
+        if (NULL_SENTINEL.equals(raw)) {
+            putL1(key, NULL_HOLDER, policy.nullTtl());
+            return new L2Hit<>(null);
+        }
+        V value = deserialize(key, raw, type);
+        if (value == null) {
+            // 反序列化失败时 deserialize 已经记过日志并清掉了这个键，
+            // 这里当作"没查到"，顺着往下走去回源——**缓存坏了不该让读失败**
+            return null;
+        }
+        putL1(key, value, policy.l1Ttl());
+        return new L2Hit<>(value);
+    }
+
+    /** 真正的回源：调业务给的函数，再把结果写回两层。调用方负责持锁。 */
+    private <V> V loadAndFill(String key, CachePolicy policy, Supplier<V> loader) {
+        loadCount.incrementAndGet();
+        V loaded = loader.get();
+        if (loaded == null) {
+            redis.opsForValue().set(key, NULL_SENTINEL, policy.nullTtl());
+            putL1(key, NULL_HOLDER, policy.nullTtl());
+        } else {
+            redis.opsForValue().set(key, serialize(loaded), policy.nextL2Ttl());
+            putL1(key, loaded, policy.l1Ttl());
+        }
+        return loaded;
+    }
+
+    private boolean tryLock(RLock lock, String key, CachePolicy policy) {
+        try {
+            return lock.tryLock(policy.lockWait().toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            // 被中断时**必须把中断标志还回去**，否则上层再也感知不到"该停了"。
+            // 这在 Tomcat 关停或请求超时时是真的会发生，吞掉它会让线程停不下来。
+            Thread.currentThread().interrupt();
+            log.warn("等待缓存回源锁时被中断，改为直接回源：[{}]", key);
+            return false;
+        }
+    }
+
+    private void unlock(RLock lock, String key) {
+        try {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        } catch (Exception e) {
+            // 解锁失败**不该把已经拿到的值丢掉**——调用方要的是值，不是锁的状态。
+            // 何况 Redisson 的锁自带租期，异常情况下也会自己释放。
+            log.warn("释放缓存回源锁失败，交由租期自动释放：[{}]", key, e);
+        }
+    }
+
+    /** 没抢到锁时，按 {@code lockWait} 分出的小段轮询 L2，等别人把值写进去。 */
+    @Nullable
+    private <V> L2Hit<V> waitForL2(String key, Class<V> type, CachePolicy policy) {
+        long waitMs = policy.lockWait().toMillis();
+        if (waitMs <= 0) {
+            return null;
+        }
+        long intervalMs = Math.max(10L, waitMs / 10);
+        long deadline = System.nanoTime() + policy.lockWait().toNanos();
+        try {
+            while (System.nanoTime() < deadline) {
+                Thread.sleep(intervalMs);
+                L2Hit<V> hit = readL2(key, type, policy);
+                if (hit != null) {
+                    return hit;
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return null;
+    }
 
     private void putL1(String key, Object value, java.time.Duration ttl) {
         // 用可变过期时间：L1 的 TTL 与 L2 不同档（前者短得多，是发布订阅丢消息时的兜底）。

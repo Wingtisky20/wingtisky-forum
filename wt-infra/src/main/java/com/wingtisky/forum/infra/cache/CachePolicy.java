@@ -23,6 +23,9 @@ import java.util.concurrent.ThreadLocalRandom;
  *   <tr><td>{@code nullTtl}</td><td>"这个 key 不存在"这条墓碑的存活时间</td>
  *       <td><b>必须短</b>：值不太会变，所以 L2 可以放几分钟；但"不存在"随时可能
  *           变成"存在"——墓碑留久了，新建的对象会被当成不存在</td></tr>
+ *   <tr><td>{@code lockWait}</td><td>抢不到锁时，最多等别的线程多久</td>
+ *       <td><b>防击穿</b>：热点 key 刚过期时，只有一个请求能拿到锁去回源，
+ *           其余的人等它。等多久是取舍——久一点命中率好，久一点线程也被占住</td></tr>
  * </table>
  *
  * <p><b>为什么 L1 要短</b>：L1 的失效靠 Redis 的发布订阅广播。而发布订阅
@@ -34,8 +37,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * @param l2Ttl    Redis 里那份的基准存活时间
  * @param l2Jitter 写 L2 时叠加的最大随机量（防雪崩）
  * @param nullTtl  空值墓碑的存活时间
+ * @param lockWait 抢不到回源锁时最多等多久（防击穿）
  */
-public record CachePolicy(Duration l1Ttl, Duration l2Ttl, Duration l2Jitter, Duration nullTtl) {
+public record CachePolicy(Duration l1Ttl, Duration l2Ttl, Duration l2Jitter,
+                          Duration nullTtl, Duration lockWait) {
 
     public CachePolicy {
         requirePositive(l1Ttl, "l1Ttl");
@@ -45,6 +50,10 @@ public record CachePolicy(Duration l1Ttl, Duration l2Ttl, Duration l2Jitter, Dur
             // 抖动可以是 0（不抖动），但不能是负数——负的会让 TTL 比基准还短，
             // 而这种错不会报错，只会让缓存"莫名其妙地不顶用"
             throw new IllegalArgumentException("l2Jitter 不能为 null 或负数：" + l2Jitter);
+        }
+        if (lockWait == null || lockWait.isNegative()) {
+            // 同上：等 0 毫秒是合法的（等于不等锁），负数没有意义
+            throw new IllegalArgumentException("lockWait 不能为 null 或负数：" + lockWait);
         }
     }
 
