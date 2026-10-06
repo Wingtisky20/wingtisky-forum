@@ -44,22 +44,28 @@ public final class RedisKey {
     /**
      * 限流计数。
      *
-     * <p>三段都要带上，缺一不可：
+     * <p>四段都要带上，缺一不可：
      * <ul>
-     *   <li>{@code dimension} —— 限流维度（ip / user），决定"限制的是谁"</li>
-     *   <li>{@code value} —— 维度取值（IP 地址或用户 ID）</li>
+     *   <li>{@code dimension} —— 限流维度（ip / user / username），决定"限制的是谁"</li>
+     *   <li>{@code value} —— 维度取值（IP 地址、用户 ID、用户名）</li>
+     *   <li>{@code method} —— 请求方法</li>
      *   <li>{@code path} —— 接口路径。**少了这段，不同接口会共用同一个计数器**，
      *       访问十个不同接口各一次就会被误判为超限</li>
      * </ul>
      *
+     * <p><b>方法为什么也要进 Key</b>：同一条路径上的读与写用的是两套阈值
+     * （`GET /api/posts` 每分钟 100 次、`POST /api/posts` 每分钟 30 次）。
+     * 不带方法的话它们会**共用一个计数器**——发几次帖就把读的额度吃掉了，
+     * 而表现是"我明明没读几篇，却被限流了"。
+     *
      * <p>路径里的 {@code /} 替换成 {@code _}：冒号是层级分隔符，路径里的斜杠虽不冲突，
      * 但统一替换后 Key 在可视化工具里的层级结构才正确。
      */
-    public static String rateLimit(String dimension, String value, String path) {
-        return PREFIX + "rate:" + dimension + ":" + value + ":" + normalize(path);
+    public static String rateLimit(String dimension, String value, String method, String path) {
+        return PREFIX + "rate:" + dimension + ":" + value + ":" + normalize(method + ":" + path);
     }
 
-    private static String normalize(String path) {
-        return path.replace('/', '_');
+    private static String normalize(String suffix) {
+        return suffix.replace('/', '_');
     }
 }
