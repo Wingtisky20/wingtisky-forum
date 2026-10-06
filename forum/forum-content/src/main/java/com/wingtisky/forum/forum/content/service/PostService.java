@@ -280,6 +280,13 @@ public class PostService {
                     status == Post.STATUS_PUBLISHED ? 1 : -1);
         }
 
+        // **下架尤其要删**：它是「下架后 45 秒内匿名还看得到」那条越权时间窗的堵法
+        //（M3 Task 7 开工前实测复现过）。
+        //
+        // 这一行**不能挪进上面那个 if**：只改置顶或加精时标签计数虽然不动，
+        // 但 top / featured 也在缓存对象里，照样得删。
+        postDetailCache.evictAfterCommit(id);
+
         log.info("帖子治理: postId={}, topFlag={}, featuredFlag={}, status={}, 操作人={}",
                 id, topFlag, featuredFlag, status, operatorId);
     }
@@ -314,6 +321,12 @@ public class PostService {
             // 传了标签就整体替换；传空列表是"把标签全去掉"，与"不改"不是一回事
             tagService.replaceTags(id, tags);
         }
+
+        // 走到这里说明至少改了一样东西（一样都没给的话上面已经抛了）。
+        // 标题、正文、标签**三样都在缓存对象里**，所以无条件删——
+        // 按字段分流只会多出三条分支，而漏掉任何一条的后果都是
+        //「详情页显示旧内容，且不报错」。
+        postDetailCache.evictAfterCommit(id);
     }
 
     /**
@@ -333,6 +346,9 @@ public class PostService {
         }
         tagService.detachAll(id);
         postMapper.softDelete(id);
+        // `deleted` 变了 → 可见性就变了。不删的话，这条**已经删掉的帖子**
+        // 会在缓存存活期内继续被读出来（对匿名也是）——删帖形同没删。
+        postDetailCache.evictAfterCommit(id);
     }
 
     /**

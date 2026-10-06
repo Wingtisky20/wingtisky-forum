@@ -4,6 +4,7 @@ import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
 import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.domain.user.UserQueryService;
+import com.wingtisky.forum.forum.content.cache.PostDetailCache;
 import com.wingtisky.forum.forum.content.dto.CommentReply;
 import com.wingtisky.forum.forum.content.dto.CommentView;
 import com.wingtisky.forum.forum.content.dto.PageResult;
@@ -33,13 +34,16 @@ public class CommentService {
     private final CommentMapper commentMapper;
     private final PostMapper postMapper;
     private final UserQueryService userQueryService;
+    private final PostDetailCache postDetailCache;
 
     public CommentService(CommentMapper commentMapper,
                           PostMapper postMapper,
-                          UserQueryService userQueryService) {
+                          UserQueryService userQueryService,
+                          PostDetailCache postDetailCache) {
         this.commentMapper = commentMapper;
         this.postMapper = postMapper;
         this.userQueryService = userQueryService;
+        this.postDetailCache = postDetailCache;
     }
 
     /**
@@ -90,6 +94,9 @@ public class CommentService {
         commentMapper.insert(comment);
 
         postMapper.addCommentCount(postId, 1);
+        // commentCount 在缓存对象里（M3 Task 7）。不删的话，详情页会一直显示旧的评论数
+        // ——列表是新发的这条已经在了，页眉的数字却还是老的，看着像统计坏了
+        postDetailCache.evictAfterCommit(postId);
         return comment.getId();
     }
 
@@ -160,6 +167,8 @@ public class CommentService {
 
         // 传负数就是减。SQL 里有 GREATEST(..., 0) 兜底，不会减成负数
         postMapper.addCommentCount(comment.getPostId(), -removed);
+        // 连带删了几条回复都只删**一次**缓存——删的是同一个 key，多删没有意义
+        postDetailCache.evictAfterCommit(comment.getPostId());
     }
 
     /** 顶层评论与回复的作者 id 合在一起，去重。 */
