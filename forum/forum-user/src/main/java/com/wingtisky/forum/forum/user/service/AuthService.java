@@ -5,8 +5,12 @@ import com.wingtisky.forum.common.result.ErrorCode;
 import com.wingtisky.forum.forum.user.dto.LoginResult;
 import com.wingtisky.forum.forum.user.entity.User;
 import com.wingtisky.forum.forum.user.security.IssuedToken;
+import com.wingtisky.forum.forum.user.ratelimit.LocalRateLimiter;
+import com.wingtisky.forum.forum.user.ratelimit.RateLimitProperties;
 import com.wingtisky.forum.forum.user.security.JwtTokenProvider;
 import com.wingtisky.forum.forum.user.security.RefreshTokenStore;
+import com.wingtisky.forum.infra.redis.RedisKey;
+import com.wingtisky.forum.infra.redis.SlidingWindowRateLimiter;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import org.slf4j.Logger;
@@ -30,20 +34,82 @@ public class AuthService {
     private final UserService userService;
     private final JwtTokenProvider tokenProvider;
     private final RefreshTokenStore refreshTokenStore;
+    private final RateLimitProperties rateLimitProperties;
+    private final SlidingWindowRateLimiter redisLimiter;
+    private final LocalRateLimiter localLimiter;
 
     public AuthService(UserService userService,
                        JwtTokenProvider tokenProvider,
-                       RefreshTokenStore refreshTokenStore) {
+                       RefreshTokenStore refreshTokenStore,
+                       RateLimitProperties rateLimitProperties,
+                       SlidingWindowRateLimiter redisLimiter,
+                       LocalRateLimiter localLimiter) {
         this.userService = userService;
         this.tokenProvider = tokenProvider;
         this.refreshTokenStore = refreshTokenStore;
+        this.rateLimitProperties = rateLimitProperties;
+        this.redisLimiter = redisLimiter;
+        this.localLimiter = localLimiter;
     }
 
-    /** 登录。凭据校验失败的各种情形由 {@code UserService.authenticate} 决定（含防枚举的两条措施）。 */
+    /**
+     * 登录。凭据校验失败的各种情形由 {@code UserService.authenticate} 决定（含防枚举的两条措施）。
+     *
+     * <p><b>限流放在最前面</b>：再往下走就是 BCrypt 比对（每次约 100ms）。
+     * 放在后面的话，撞库请求已经打到密码校验上了，限流来得太晚。
+     */
     public LoginResult login(String username, String rawPassword) {
+        checkUsernameRateLimit(username);
+
         User user = userService.authenticate(username, rawPassword);
         List<String> roles = userService.getRoleCodes(user.getId());
         return issueTokens(user, roles);
+    }
+
+    /**
+     * 按**用户名**限流。与限流拦截器里的 IP 维度**不是重复**：
+     *
+     * <ul>
+     *   <li>按 IP —— 挡"同一台机器试很多账号"</li>
+     *   <li>按用户名 —— 挡"很多台机器试同一个账号"（撞库的经典形态）</li>
+     * </ul>
+     *
+     * <p><b>为什么它不在限流拦截器里</b>（M1 设计稿 §5.4 论证过）：拦截器运行在
+     * Controller 之前，**拿不到请求体里的用户名**；要在那里拿，就得把请求包一层
+     * （{@code ContentCachingRequestWrapper}），而请求体是一次性的，读完后续
+     * {@code @RequestBody} 就拿不到了。放到这里，用户名已经是方法参数。
+     *
+     * <p>代价是限流逻辑分了两处。**这是有意的取舍，不是随手写的**——
+     * 所以这段注释要留在这里，免得下一个人把它挪回拦截器里，一挪就坏。
+     *
+     * <p><b>Redis 挂掉时退回本地内存</b>，不放行也不全拒：
+     * 防撞库是这一维度限流的**唯一目的**，放行等于把门打开；
+     * 而全拒会让谁都登不进来。退回单机计数精度差些，但保护还在
+     * （与登录的 IP 维度同策略，见 ADR-0014）。
+     */
+    private void checkUsernameRateLimit(String username) {
+        if (username == null || username.isBlank()) {
+            return;
+        }
+
+        RateLimitProperties.LoginUsernameLimit rule = rateLimitProperties.getLoginUsername();
+        String key = RedisKey.rateLimit("username", username, "POST", "/api/auth/login");
+
+        boolean allowed;
+        try {
+            allowed = redisLimiter.tryAcquire(key, rule.getLimit(), rule.getWindow().toMillis())
+                    .allowed();
+        } catch (RuntimeException e) {
+            // 记 ERROR 而不是 WARN：限流正在失效，这是需要被看到的信号
+            log.error("用户名维度限流降级：Redis 不可用，退回本地内存。key={}", key, e);
+            allowed = localLimiter.tryAcquire(key, rule.getLimit(), rule.getWindow().toMillis());
+        }
+
+        if (!allowed) {
+            log.warn("触发用户名维度限流: username={}, limit={}/{}",
+                    username, rule.getLimit(), rule.getWindow());
+            throw new BizException(ErrorCode.TOO_MANY_REQUESTS);
+        }
     }
 
     /**
