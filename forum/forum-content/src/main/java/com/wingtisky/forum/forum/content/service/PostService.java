@@ -10,6 +10,8 @@ import com.wingtisky.forum.forum.content.dto.PostListItem;
 import com.wingtisky.forum.forum.content.dto.PostQuery;
 import com.wingtisky.forum.forum.content.entity.Post;
 import com.wingtisky.forum.forum.content.mapper.PostMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +44,8 @@ public class PostService {
      * （{@code t_post.summary} 是 varchar(255)，按字符计，200 个字符放得下。）
      */
     static final int SUMMARY_MAX_CODE_POINTS = 200;
+
+    private static final Logger log = LoggerFactory.getLogger(PostService.class);
 
     private final PostMapper postMapper;
     private final UserQueryService userQueryService;
@@ -138,9 +142,11 @@ public class PostService {
      * 这是有意接受的——M2 先用最直接的方式把数据记下来，
      * **M3 会把它换成 Redis 累加 + 定期回写**，那时只改这一行。
      */
-    public PostDetail getDetail(Long id, Long viewerId) {
+    public PostDetail getDetail(Long id, Long viewerId, boolean viewerIsModerator) {
         Post post = postMapper.selectById(id);
-        if (post == null) {
+        if (post == null || !visibleTo(post, viewerId, viewerIsModerator)) {
+            // 已删**或已下架**且你没资格看时，对外一律当作"不存在"。
+            // 用 403 会告诉对方"这个 id 是存在的"——那本身就是一种信息泄漏。
             throw new BizException(ErrorCode.POST_NOT_FOUND);
         }
 
@@ -156,6 +162,68 @@ public class PostService {
         return PostDetail.from(post, author,
                 interactionService.liked(id, viewerId),
                 interactionService.collected(id, viewerId));
+    }
+
+    /**
+     * 这条帖子对这个人可见吗。
+     *
+     * <p>正常的帖子谁都能看。**被下架的帖子，作者本人与版主仍然能打开**——
+     * 原因是治理要能解释得清：帖子突然从作者眼前消失、没有任何提示，
+     * 他只会以为是 bug。别人则当作它不存在。
+     *
+     * <p><b>注意列表那边不适用这条规则</b>：列表是公开视图，下架的帖子对谁都
+     * 不显示，包括作者自己的个人主页。作者要看到它，走详情页的直链。
+     * （更完整的做法是给作者一个"我的帖子（含已下架）"的入口，M2 不做。）
+     *
+     * <p>{@code viewerIsModerator} 由**接口层**算好传进来（那里才知道当前用户
+     * 有什么角色）——Service 不去读安全上下文，"谁有资格"是接口层的问题。
+     */
+    private static boolean visibleTo(Post post, Long viewerId, boolean viewerIsModerator) {
+        if (post.isVisible()) {
+            return true;
+        }
+        if (viewerId == null) {
+            return false;
+        }
+        return viewerId.equals(post.getAuthorId()) || viewerIsModerator;
+    }
+
+    /**
+     * 后台治理：置顶 / 加精 / 上下架（部分更新）。
+     *
+     * <p><b>上下架要连带调整标签的使用次数</b>：下架让帖子从公开列表消失，
+     * 它给各标签贡献的那一篇也该跟着消失，否则标签页的数字会虚高——
+     * 这与删帖减计数是同一件事。
+     *
+     * <p><b>下架与删帖是两回事</b>：下架改的是 {@code status}（版主治理，可恢复），
+     * 删帖改的是 {@code deleted}（作者删除）。所以被下架的帖子**还能恢复**。
+     *
+     * @param operatorId 操作人，**只用于日志**。权限在接口层用
+     *                   {@code @PreAuthorize} 判过，这里不再判。
+     */
+    @Transactional
+    public void administrate(Long id, Long operatorId,
+                             Boolean topFlag, Boolean featuredFlag, Integer status) {
+        if (topFlag == null && featuredFlag == null && status == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "至少要修改置顶、加精或上下架中的一项");
+        }
+
+        Post post = postMapper.selectById(id);
+        if (post == null) {
+            throw new BizException(ErrorCode.POST_NOT_FOUND);
+        }
+
+        postMapper.updateAttributes(id, topFlag, featuredFlag, status);
+
+        // 只有"状态真的变了"才动标签计数——重复把已下架的帖子再下架一次，
+        // 不该把标签的数字减第二遍
+        if (status != null && !status.equals(post.getStatus())) {
+            tagService.adjustPostCountForTagsOf(id,
+                    status == Post.STATUS_PUBLISHED ? 1 : -1);
+        }
+
+        log.info("帖子治理: postId={}, topFlag={}, featuredFlag={}, status={}, 操作人={}",
+                id, topFlag, featuredFlag, status, operatorId);
     }
 
     /**
