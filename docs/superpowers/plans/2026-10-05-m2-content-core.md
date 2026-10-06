@@ -224,6 +224,11 @@ mvn -q -pl forum/forum-content -am test
 > **能区分 GET 与 POST**——规则目前**只按路径匹配**，给 `/api/posts` 设 10/分钟
 > 会把**公开的帖子列表**也一起限到 10/分钟，那比不做更糟。
 > Task 4 先用默认的 100/分钟；Task 9 补"按方法区分"的能力，再逐接口定阈值。
+>
+> **✅ 2026-10-06 已在 Task 9 做完**：限流规则现在支持 `methods`，阈值分成
+> 读 100 / 写 30 / 发帖 10 三档。**并且发现当初的判断还漏了一层**——
+> 键（Redis key）也必须带上方法，否则同一条路径上的读与写仍会**共用一个计数器**，
+> 那"分档"就只是配置上的好看。详见 Task 9 的提交与 `RedisKey` 的注释。
 
 **Interfaces:**
 - Produces: `POST /api/posts`、`GET /api/posts`、`GET /api/posts/{id}`、

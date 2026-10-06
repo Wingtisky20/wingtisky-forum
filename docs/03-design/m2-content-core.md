@@ -404,13 +404,24 @@ M1 设计 §5.4 明确留了这个缺口，并写下了建议做法。**M2 要�
       login-username:
         limit: 5
         window: 1m
-        fallback: local
   ```
 
-- 实现复用现成的 `SlidingWindowRateLimiter`（`wt-infra`）与 `LocalRateLimiter`（降级），
-  Key 用 `RedisKey.rateLimit("username", username, "/api/auth/login")`。
+  > **⚠️ 2026-10-06 落地时的两处出入（本稿初版写的与最终实现不同）**：
+  > 1. **去掉了 `fallback` 字段**（初稿写的是 `fallback: local`）——
+  >    这一维度只有"退回本地内存"一条路可走（放行等于把门打开、全拒又谁都登不进来），
+  >    **留一个永远不会被改成别的值的配置项只是噪音**。
+  > 2. **`RedisKey.rateLimit` 多了一个方法参数**（同一次 Task 9 加的）：
+  >    限流规则现在按"路径 + 方法"匹配，Key 也必须带上方法，
+  >    否则 `GET /api/posts` 与 `POST /api/posts` 会共用一个计数器。
+  >    形状变成 `wt:rate:username:<用户名>:POST:_api/auth/login`。
+
+- 实现复用现成的 `SlidingWindowRateLimiter`（`wt-infra`）与 `LocalRateLimiter`（降级）。
 - **计数放在密码校验之前**——否则撞库请求已经打到 BCrypt 了，限流就晚了。
 - 阈值 `5 / 分钟` 是初始值，和 M1 那些数字一样，**M10 压测时校准**。
+
+> **✅ 2026-10-06 已完成**（M2 Task 9）。真实 HTTP 实测：
+> 同一用户名连打 6 次登录 → **前 5 次 `401`、第 6 次 `429`**；
+> **换一个用户名 → 仍是 `401`**（证明两个计数器是分开的，不是把 IP 也一起限了）。
 
 ### 5.3 两处必须写清的理由
 
