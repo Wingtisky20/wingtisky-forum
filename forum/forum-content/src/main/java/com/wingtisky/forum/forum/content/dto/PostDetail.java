@@ -1,7 +1,7 @@
 package com.wingtisky.forum.forum.content.dto;
 
 import com.wingtisky.forum.domain.user.UserBrief;
-import com.wingtisky.forum.forum.content.entity.Post;
+import com.wingtisky.forum.forum.content.cache.CachedPostDetail;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -45,32 +45,40 @@ public record PostDetail(
 ) {
 
     /**
-     * @param viewCount 由**调用方传进来**，而不是从 {@code post} 上取。
-     *                  原因是 M3 起浏览数不在库里了——它由 Redis 计数器负责，
-     *                  传进来才能让这个 DTO 不依赖"浏览数存在哪"。
+     * 从**缓存对象**组装详情——M3 起详情页走这条路。
+     *
+     * <p>入参是 {@link CachedPostDetail} 而不是 {@code Post} 实体，因为读路径上
+     * 已经不再直接查库了：公共内容由两级缓存供给。缓存对象里本来就带着组装
+     * 这个 DTO 需要的全部字段（它就是从帖子实体切出来的）。
+     *
+     * @param viewCount 由**调用方传进来**，而不是从缓存对象上取。
+     *                  原因是浏览数每次读都在变，压根不在缓存里——它由 Redis
+     *                  计数器负责。传进来才能让这个 DTO 不依赖"浏览数存在哪"。
+     * @param liked     因人而异，**不进缓存**，每次现查
+     * @param collected 同上
      */
-    public static PostDetail from(Post post, UserBrief author, int viewCount,
-                                  boolean liked, boolean collected, List<TagView> tags) {
+    public static PostDetail from(CachedPostDetail post, int viewCount,
+                                  boolean liked, boolean collected) {
         return new PostDetail(
-                post.getId(),
-                post.getTitle(),
-                post.getContent(),
-                post.getAuthorId(),
-                author,
-                post.getTopFlag() == 1,
-                post.getFeaturedFlag() == 1,
-                post.isOffline(),
+                post.id(),
+                post.title(),
+                post.content(),
+                post.authorId(),
+                post.author(),
+                post.top(),
+                post.featured(),
+                post.offline(),
                 viewCount,
-                post.getLikeCount(),
-                post.getCommentCount(),
-                post.getCollectCount(),
+                post.likeCount(),
+                post.commentCount(),
+                post.collectCount(),
                 liked,
                 collected,
                 // 兜一层 null：list 类型的字段一旦序列化成 `"tags": null`，
                 // 前端每个用到它的地方都得写 `|| []`——漏一处就是一次白屏。
                 // 在这一个边界上归一成空列表，比让所有调用方都记得判空便宜。
-                tags == null ? List.of() : tags,
-                post.getCreateTime(),
-                post.getUpdateTime());
+                post.tags() == null ? List.of() : post.tags(),
+                post.createTime(),
+                post.updateTime());
     }
 }

@@ -4,6 +4,8 @@ import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
 import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.domain.user.UserQueryService;
+import com.wingtisky.forum.forum.content.cache.CachedPostDetail;
+import com.wingtisky.forum.forum.content.cache.PostDetailCache;
 import com.wingtisky.forum.forum.content.cache.PostViewCounter;
 import com.wingtisky.forum.forum.content.dto.PageResult;
 import com.wingtisky.forum.forum.content.dto.PostDetail;
@@ -53,17 +55,20 @@ public class PostService {
     private final TagService tagService;
     private final InteractionService interactionService;
     private final PostViewCounter postViewCounter;
+    private final PostDetailCache postDetailCache;
 
     public PostService(PostMapper postMapper,
                        UserQueryService userQueryService,
                        TagService tagService,
                        InteractionService interactionService,
-                       PostViewCounter postViewCounter) {
+                       PostViewCounter postViewCounter,
+                       PostDetailCache postDetailCache) {
         this.postMapper = postMapper;
         this.userQueryService = userQueryService;
         this.tagService = tagService;
         this.interactionService = interactionService;
         this.postViewCounter = postViewCounter;
+        this.postDetailCache = postDetailCache;
     }
 
     /**
@@ -142,16 +147,28 @@ public class PostService {
     /**
      * 取详情。
      *
-     * <p><b>M3 起这里不再写库了。</b> M2 时它是个"读接口里带写"的方法：
-     * 每看一次就 {@code UPDATE t_post SET view_count = view_count + 1}。
-     * 现在浏览数交给 Redis 计数器（{@link PostViewCounter}），
-     * **读路径上一次数据库写都没有了**——那正是这个亮点要拿到的收益。
+     * <p><b>M3 起这条路只在"缓存没命中"时才查库，而且不再写库。</b> M2 时它每次
+     * 都要 {@code SELECT} 一次帖子、一次作者、一次标签，再 {@code UPDATE} 一次浏览数。
+     * 现在是：公共内容由两级缓存供给（{@link PostDetailCache}），浏览数由 Redis
+     * 计数器供给（{@link PostViewCounter}），只有"我点过赞没"这类**因人而异**的状态
+     * 每次现查——那是本来就缓存不了的。
      *
-     * <p>代价是浏览数变成**最终一致**：Redis 重启会丢最近一段增量
-     * （architecture.md §2.1 明写这个域的一致性要求是"最终一致可接受（浏览数）"）。
+     * <p>代价有两处，都在明处：浏览数变成**最终一致**（Redis 重启会丢最近一段增量），
+     * 内容最多脏一个 L1 的存活时间（发布订阅丢消息时的兜底）。
+     * architecture.md §2.1 明写这个域的一致性要求是"最终一致可接受（浏览数）"。
+     *
+     * <p><b>三步的顺序不能换</b>：
+     * <ol>
+     *   <li>先从缓存拿**公共内容**。回源函数只回答"这条帖子在不在"，
+     *       **不回答"你能不能看"**——见 {@link #loadForCache}；</li>
+     *   <li>再判可见性。**命中缓存也要重判**：缓存里存的是数据，不是权限判定的结果。
+     *       少了这一步，一篇被下架、又被缓存的帖子，匿名用户就能读到正文；</li>
+     *   <li>最后才是浏览数。**排在可见性之后**——看不见的东西不该被计数。</li>
+     * </ol>
      */
     public PostDetail getDetail(Long id, Long viewerId, boolean viewerIsModerator) {
-        Post post = postMapper.selectById(id);
+        CachedPostDetail post = postDetailCache.get(id, () -> loadForCache(id));
+
         if (post == null || !visibleTo(post, viewerId, viewerIsModerator)) {
             // 已删**或已下架**且你没资格看时，对外一律当作"不存在"。
             // 用 403 会告诉对方"这个 id 是存在的"——那本身就是一种信息泄漏。
@@ -166,15 +183,40 @@ public class PostService {
         // 第二个参数是**惰性**的：只有计数器不存在（Redis 重启、键过期、这篇帖子
         // 第一次被看）时才会被执行，去库里拿一个基准值。正常路径一次库都不查
         // ——这是把浏览数搬去 Redis 的全部收益，写成"每次先查一次库"就白搬了。
+        //
+        // ⚠️ 它**不在缓存对象里**（{@link CachedPostDetail} 刻意不含这个字段）：
+        // 浏览数每次读都在变，放进缓存的话，它从被存进去那一刻起就是脏的。
         int viewCount = (int) postViewCounter.increment(id, () -> postMapper.selectViewCount(id));
 
-        UserBrief author = userQueryService.findBrief(post.getAuthorId()).orElse(null);
-
-        // 未登录时 viewerId 为 null，InteractionService 会直接返回 false 且**不查库**
-        return PostDetail.from(post, author, viewCount,
+        // 未登录时 viewerId 为 null，InteractionService 会直接返回 false 且**不查库**。
+        // 这两项因**人**而异，是用户私有状态，不能进公共缓存——
+        // 塞进去的话，下一个命中缓存的用户会看到别人点过的赞。
+        return PostDetail.from(post, viewCount,
                 interactionService.liked(id, viewerId),
-                interactionService.collected(id, viewerId),
-                tagService.listByPost(id));
+                interactionService.collected(id, viewerId));
+    }
+
+    /**
+     * 回源：缓存没命中时，把一条帖子的**公共内容**取回来存进缓存。
+     *
+     * <p><b>它只回答"这条帖子在不在"，不回答"你能不能看"。</b> 这是本 Task 最容易
+     * 写错的一处：按可见性返回 {@code null} 的话，被下架的帖子会连**作者本人**
+     * 都变成 404（M2 明确定过"作者与版主仍能打开"），而且缓存里存下的就成了
+     * "某个人的权限判定结果"——换个人命中同一个 key 就串号了。
+     *
+     * <p>所以已下架的帖子**照样进缓存**，判定留给 {@link #getDetail} 的第二步。
+     * 那一步是纯内存判断，比再查一次库便宜得多。
+     */
+    private CachedPostDetail loadForCache(Long id) {
+        Post post = postMapper.selectById(id);
+        if (post == null) {
+            // 真的不存在（没发过，或已被作者标记删除——SQL 里 `deleted = 0` 挡住了）。
+            // 返回 null 会让缓存写下一枚短命的墓碑，免得"反复查一个不存在的 id"
+            // 每次都压到数据库上（防穿透）。
+            return null;
+        }
+        UserBrief author = userQueryService.findBrief(post.getAuthorId()).orElse(null);
+        return CachedPostDetail.from(post, author, tagService.listByPost(id));
     }
 
     /**
@@ -184,6 +226,9 @@ public class PostService {
      * 原因是治理要能解释得清：帖子突然从作者眼前消失、没有任何提示，
      * 他只会以为是 bug。别人则当作它不存在。
      *
+     * <p><b>它收的是缓存对象，不是实体</b>——所以命中缓存时同样能判。判定只需要
+     * "这条帖子本身可不可见"与"作者是谁"，这两样 {@link CachedPostDetail} 都带着。
+     *
      * <p><b>注意列表那边不适用这条规则</b>：列表是公开视图，下架的帖子对谁都
      * 不显示，包括作者自己的个人主页。作者要看到它，走详情页的直链。
      * （更完整的做法是给作者一个"我的帖子（含已下架）"的入口，M2 不做。）
@@ -191,14 +236,14 @@ public class PostService {
      * <p>{@code viewerIsModerator} 由**接口层**算好传进来（那里才知道当前用户
      * 有什么角色）——Service 不去读安全上下文，"谁有资格"是接口层的问题。
      */
-    private static boolean visibleTo(Post post, Long viewerId, boolean viewerIsModerator) {
-        if (post.isVisible()) {
+    private static boolean visibleTo(CachedPostDetail post, Long viewerId, boolean viewerIsModerator) {
+        if (post.visible()) {
             return true;
         }
         if (viewerId == null) {
             return false;
         }
-        return viewerId.equals(post.getAuthorId()) || viewerIsModerator;
+        return viewerId.equals(post.authorId()) || viewerIsModerator;
     }
 
     /**
