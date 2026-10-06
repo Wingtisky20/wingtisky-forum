@@ -105,6 +105,21 @@
         WHERE id = #{postId} AND deleted = 0
     </update>
 
+    <!-- 点赞数 / 收藏数。与评论数同一套路（单语句、GREATEST 下限保护）。
+         列名写死在这里而不是当参数传：能当参数传就意味着要拼 SQL，
+         而那正是注入的口子。 -->
+    <update id="addLikeCount">
+        UPDATE t_post
+        SET like_count = GREATEST(like_count + #{delta}, 0)
+        WHERE id = #{postId} AND deleted = 0
+    </update>
+
+    <update id="addCollectCount">
+        UPDATE t_post
+        SET collect_count = GREATEST(collect_count + #{delta}, 0)
+        WHERE id = #{postId} AND deleted = 0
+    </update>
+
     <update id="softDelete">
         UPDATE t_post
         SET deleted = 1

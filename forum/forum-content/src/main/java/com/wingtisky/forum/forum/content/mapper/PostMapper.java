@@ -86,6 +86,16 @@ public interface PostMapper {
      */
     int addCommentCount(@Param("postId") Long postId, @Param("delta") int delta);
 
+    /**
+     * 调整帖子的点赞数。含义与 {@link #addCommentCount} 相同，
+     * 只是改的是另一列——**列名不能当参数传**（那要拼 SQL，等于开一个注入口子），
+     * 所以每个计数各有一个方法。代价是同形状的方法会随计数种类增加。
+     */
+    int addLikeCount(@Param("postId") Long postId, @Param("delta") int delta);
+
+    /** 调整帖子的收藏数。 */
+    int addCollectCount(@Param("postId") Long postId, @Param("delta") int delta);
+
     /** 逻辑删除（标记 {@code deleted = 1}）。**不是真的删行**——见 V2 建表脚本的说明。 */
     int softDelete(Long id);
 

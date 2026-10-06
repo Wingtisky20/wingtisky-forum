@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wingtisky.forum.forum.content.mapper.PostCollectMapper">
+
+    <!-- 与 PostLikeMapper 的三条语句形状相同，理由见那边的注释与 ADR-0017。 -->
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO t_post_collect (user_id, post_id)
+        VALUES (#{userId}, #{postId})
+    </insert>
+
+    <delete id="delete">
+        DELETE
+        FROM t_post_collect
+        WHERE user_id = #{userId}
+          AND post_id = #{postId}
+    </delete>
+
+    <select id="exists" resultType="int">
+        SELECT COUNT(*)
+        FROM t_post_collect
+        WHERE user_id = #{userId}
+          AND post_id = #{postId}
+    </select>
+
+</mapper>

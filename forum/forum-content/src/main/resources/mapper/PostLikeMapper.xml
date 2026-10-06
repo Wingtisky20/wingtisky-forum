@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wingtisky.forum.forum.content.mapper.PostLikeMapper">
+
+    <!-- INSERT IGNORE：撞上联合主键 (user_id, post_id) 时**安静跳过**，不抛异常。
+         这就是"重复点赞不出错"的全部实现——幂等交给数据库，
+         而不是应用层先查一遍再插（那在并发下有窗口）。
+
+         ⚠️ 它的返回值是"插入了几行"：插入成功 1，被忽略 0。
+         调用方必须用它决定要不要给帖子的点赞数 +1，否则同一个人点十次计数就是十。 -->
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO t_post_like (user_id, post_id)
+        VALUES (#{userId}, #{postId})
+    </insert>
+
+    <!-- 物理删除。这张表没有 deleted 列——"取消点赞"=这件事没发生过，
+         留一行标记删除没有意义（V2 建表脚本里有完整说明）。 -->
+    <delete id="delete">
+        DELETE
+        FROM t_post_like
+        WHERE user_id = #{userId}
+          AND post_id = #{postId}
+    </delete>
+
+    <select id="exists" resultType="int">
+        SELECT COUNT(*)
+        FROM t_post_like
+        WHERE user_id = #{userId}
+          AND post_id = #{postId}
+    </select>
+
+</mapper>
