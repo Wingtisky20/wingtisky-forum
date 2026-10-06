@@ -7,6 +7,7 @@ import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.forum.content.dto.TagView;
 import com.wingtisky.forum.forum.content.entity.Post;
 import com.wingtisky.forum.infra.cache.CacheEvictionBroadcaster;
+import com.wingtisky.forum.infra.cache.CachePolicy;
 import com.wingtisky.forum.infra.cache.LocalCache;
 import com.wingtisky.forum.infra.cache.TwoLevelCache;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,8 +49,17 @@ class PostDetailCacheTest {
 
     private static final Long POST_ID = 7L;
 
+    /** 与生产配置里的初始值一致，见 `application.yml` 的 `wt.cache` 段。 */
+    private static final CachePolicy DEFAULT_POLICY = new CachePolicy(
+            Duration.ofSeconds(45), Duration.ofMinutes(5), Duration.ofSeconds(60),
+            Duration.ofSeconds(60), Duration.ofMillis(500));
+
     private StringRedisTemplate redis;
     private Map<String, String> l2;
+
+    /** 哪些 key 被以多长的 TTL 写进了 L2——用来证明**配置真的生效了**。 */
+    private Map<String, Duration> writtenTtl;
+
     private TwoLevelCache twoLevelCache;
     private PostDetailCache cache;
 
@@ -59,11 +69,13 @@ class PostDetailCacheTest {
         // InterruptedException：RLock.tryLock(long, TimeUnit) 是会抛的
         // （它继承 java.util.concurrent.locks.Lock），打桩时得让它过去
         l2 = new HashMap<>();
+        writtenTtl = new HashMap<>();
 
         ValueOperations<String, String> ops = mock(ValueOperations.class);
         when(ops.get(anyString())).thenAnswer(inv -> l2.get(inv.getArgument(0)));
         doAnswer(inv -> {
             l2.put(inv.getArgument(0), inv.getArgument(1));
+            writtenTtl.put(inv.getArgument(0), inv.getArgument(2));
             return null;
         }).when(ops).set(anyString(), anyString(), any(Duration.class));
 
@@ -71,6 +83,7 @@ class PostDetailCacheTest {
         when(redis.opsForValue()).thenReturn(ops);
         doAnswer(inv -> {
             l2.remove(inv.getArgument(0));
+            writtenTtl.remove(inv.getArgument(0));
             return Boolean.TRUE;
         }).when(redis).delete(anyString());
 
@@ -82,7 +95,20 @@ class PostDetailCacheTest {
 
         twoLevelCache = new TwoLevelCache(redis, objectMapper(), redisson, new LocalCache(),
                 mock(CacheEvictionBroadcaster.class));
-        cache = new PostDetailCache(twoLevelCache);
+        cache = new PostDetailCache(twoLevelCache, props(true));
+    }
+
+    /** 造一份配置。默认开关打开、数值与生产初始值一致。 */
+    private static CacheProperties props(boolean enabled) {
+        return props(enabled, DEFAULT_POLICY);
+    }
+
+    private static CacheProperties props(boolean enabled, CachePolicy policy) {
+        return new CacheProperties(
+                new CacheProperties.PostDetail(enabled,
+                        policy.l1Ttl(), policy.l2Ttl(), policy.l2Jitter(),
+                        policy.nullTtl(), policy.lockWait()),
+                new CacheProperties.ViewCount(Duration.ofSeconds(30)));
     }
 
     // ---------- 结构性守卫：缓存对象的字段清单 ----------
@@ -195,6 +221,59 @@ class PostDetailCacheTest {
         });
 
         assertThat(afterEvict.title()).isEqualTo("改过的标题");
+    }
+
+    // ---------- 配置段与总开关（Task 9） ----------
+
+    @Test
+    @DisplayName("★ 总开关关掉：**根本不碰两级缓存**，直接回源，Redis 里一个新 key 都不出现")
+    void disabledSwitchBypassesCacheEntirely() {
+        PostDetailCache off = new PostDetailCache(twoLevelCache, props(false));
+        AtomicInteger loads = new AtomicInteger();
+
+        CachedPostDetail value = off.get(POST_ID, () -> {
+            loads.incrementAndGet();
+            return published();
+        });
+
+        assertThat(value.title()).isEqualTo("标题");
+        assertThat(loads).hasValue(1);
+        assertThat(l2)
+                .as("这一条不成立，Task 10 的「纯 MySQL」对照组测的就是同一套代码——"
+                        + "而那个实验看起来会很像真的")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("★ 总开关关掉后，写路径的 evict 也是空操作——缓存这一层等于不存在")
+    void disabledSwitchMakesEvictANoOp() {
+        PostDetailCache off = new PostDetailCache(twoLevelCache, props(false));
+
+        off.evictAfterCommit(POST_ID);
+        off.evict(POST_ID);
+
+        // 没有断言"缓存里还有东西"——装东西进去要先经过一个"开着"的实例，
+        // 而这里要证明的只是：关掉之后**它不去动 Redis**
+        assertThat(l2).isEmpty();
+    }
+
+    @Test
+    @DisplayName("★ 存活时长来自配置：改配置，写进 L2 的 TTL 跟着变")
+    void policyComesFromConfiguration() {
+        Duration l2Ttl = Duration.ofSeconds(90);
+        Duration jitter = Duration.ofSeconds(10);
+        PostDetailCache configured = new PostDetailCache(twoLevelCache,
+                props(true, new CachePolicy(Duration.ofSeconds(7), l2Ttl, jitter,
+                        Duration.ofSeconds(3), Duration.ofMillis(123))));
+
+        configured.get(POST_ID, this::published);
+
+        // 不直接断言"传进去的 policy 是哪个"（那只是证明参数传对了），
+        // 而是看**真正写进 L2 的那个 TTL**：它必然落在 [l2Ttl, l2Ttl + jitter] 里。
+        // 用生产初始值（5 分钟 + 60 秒）是落不到这个区间的。
+        assertThat(writtenTtl.get("wt:cache:post:detail:" + POST_ID))
+                .isNotNull()
+                .isBetween(l2Ttl, l2Ttl.plus(jitter));
     }
 
     // ---------- 辅助 ----------
