@@ -4,6 +4,7 @@ import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
 import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.domain.user.UserQueryService;
+import com.wingtisky.forum.forum.content.cache.PostViewCounter;
 import com.wingtisky.forum.forum.content.dto.PageResult;
 import com.wingtisky.forum.forum.content.dto.PostDetail;
 import com.wingtisky.forum.forum.content.dto.PostListItem;
@@ -51,15 +52,18 @@ public class PostService {
     private final UserQueryService userQueryService;
     private final TagService tagService;
     private final InteractionService interactionService;
+    private final PostViewCounter postViewCounter;
 
     public PostService(PostMapper postMapper,
                        UserQueryService userQueryService,
                        TagService tagService,
-                       InteractionService interactionService) {
+                       InteractionService interactionService,
+                       PostViewCounter postViewCounter) {
         this.postMapper = postMapper;
         this.userQueryService = userQueryService;
         this.tagService = tagService;
         this.interactionService = interactionService;
+        this.postViewCounter = postViewCounter;
     }
 
     /**
@@ -138,9 +142,13 @@ public class PostService {
     /**
      * 取详情。
      *
-     * <p><b>这是个"读接口里带写"的方法</b>：它会给浏览数 +1。
-     * 这是有意接受的——M2 先用最直接的方式把数据记下来，
-     * **M3 会把它换成 Redis 累加 + 定期回写**，那时只改这一行。
+     * <p><b>M3 起这里不再写库了。</b> M2 时它是个"读接口里带写"的方法：
+     * 每看一次就 {@code UPDATE t_post SET view_count = view_count + 1}。
+     * 现在浏览数交给 Redis 计数器（{@link PostViewCounter}），
+     * **读路径上一次数据库写都没有了**——那正是这个亮点要拿到的收益。
+     *
+     * <p>代价是浏览数变成**最终一致**：Redis 重启会丢最近一段增量
+     * （architecture.md §2.1 明写这个域的一致性要求是"最终一致可接受（浏览数）"）。
      */
     public PostDetail getDetail(Long id, Long viewerId, boolean viewerIsModerator) {
         Post post = postMapper.selectById(id);
@@ -150,16 +158,20 @@ public class PostService {
             throw new BizException(ErrorCode.POST_NOT_FOUND);
         }
 
-        postMapper.incrementViewCount(id);
-
-        // 返回值里也把本次访问算上：否则响应里的数字和数据库里的差 1，
-        // 排查时会怀疑"更新是不是没生效"——把时间花在一个其实对的地方。
-        post.setViewCount(post.getViewCount() + 1);
+        // 浏览数改由 Redis 计数器负责（M3 收掉了 M2 留的伏笔）。
+        //
+        // 返回值里已经含本次访问：M2 时这里要手工 `+1`，而现在计数器返回的就是新值，
+        // 不会再出现"响应里的数字和记下来的差 1"。
+        //
+        // 第二个参数是**惰性**的：只有计数器不存在（Redis 重启、键过期、这篇帖子
+        // 第一次被看）时才会被执行，去库里拿一个基准值。正常路径一次库都不查
+        // ——这是把浏览数搬去 Redis 的全部收益，写成"每次先查一次库"就白搬了。
+        int viewCount = (int) postViewCounter.increment(id, () -> postMapper.selectViewCount(id));
 
         UserBrief author = userQueryService.findBrief(post.getAuthorId()).orElse(null);
 
         // 未登录时 viewerId 为 null，InteractionService 会直接返回 false 且**不查库**
-        return PostDetail.from(post, author,
+        return PostDetail.from(post, author, viewCount,
                 interactionService.liked(id, viewerId),
                 interactionService.collected(id, viewerId),
                 tagService.listByPost(id));

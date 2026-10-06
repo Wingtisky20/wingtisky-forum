@@ -44,7 +44,12 @@ public record PostDetail(
         LocalDateTime updateTime
 ) {
 
-    public static PostDetail from(Post post, UserBrief author,
+    /**
+     * @param viewCount 由**调用方传进来**，而不是从 {@code post} 上取。
+     *                  原因是 M3 起浏览数不在库里了——它由 Redis 计数器负责，
+     *                  传进来才能让这个 DTO 不依赖"浏览数存在哪"。
+     */
+    public static PostDetail from(Post post, UserBrief author, int viewCount,
                                   boolean liked, boolean collected, List<TagView> tags) {
         return new PostDetail(
                 post.getId(),
@@ -55,7 +60,7 @@ public record PostDetail(
                 post.getTopFlag() == 1,
                 post.getFeaturedFlag() == 1,
                 post.isOffline(),
-                post.getViewCount(),
+                viewCount,
                 post.getLikeCount(),
                 post.getCommentCount(),
                 post.getCollectCount(),

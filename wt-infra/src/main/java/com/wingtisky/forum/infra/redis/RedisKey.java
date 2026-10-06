@@ -90,6 +90,22 @@ public final class RedisKey {
      *
      * <p>例：{@code wt:cache:post:detail:7} → {@code wt:lock:cache:post:detail:7}
      */
+    public static String postViewCount(Long postId) {
+        return PREFIX + "cache:post:view:" + postId;
+    }
+
+    /**
+     * "哪些帖子的浏览数还没回写进库"的集合。
+     *
+     * <p>回写是定时任务做的，它得知道**该回写哪几条**。不用全表扫（那会随帖子数线性变慢），
+     * 而是每次浏览时把这个 id 记进集合，回写完再移除。
+     *
+     * <p>它是一个 SET 而不是 LIST：同一篇帖子被看一百次，集合里也只有一条。
+     */
+    public static String postViewDirtySet() {
+        return PREFIX + "cache:post:view:dirty";
+    }
+
     public static String cacheLock(String cacheKey) {
         String bare = cacheKey.startsWith(PREFIX) ? cacheKey.substring(PREFIX.length()) : cacheKey;
         return PREFIX + "lock:" + bare;
