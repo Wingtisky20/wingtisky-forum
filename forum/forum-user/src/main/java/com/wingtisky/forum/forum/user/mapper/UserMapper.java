@@ -2,7 +2,9 @@ package com.wingtisky.forum.forum.user.mapper;
 
 import com.wingtisky.forum.forum.user.entity.User;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -28,6 +30,26 @@ public interface UserMapper {
     int insert(User user);
 
     User selectById(Long id);
+
+    /**
+     * 批量取用户展示信息的**最小投影**（跨域契约 {@code UserQueryService} 用的那条查询）。
+     *
+     * <p><b>只 select {@code id, nickname, avatar} 三列</b>，所以返回的 {@code User}
+     * 是**部分填充**的：{@code password} / {@code email} / {@code status} / 时间字段
+     * 全是 null。<b>不要把它当完整的 User 用</b>——尤其别拿它做 {@code isActive()} 判断，
+     * 那会因为 {@code status} 是 null 而返回 false，表现为"作者全被当成封禁账号"。
+     *
+     * <p><b>不 select {@code password} 是有意的</b>：跨域展示用不到它，
+     * 而让 BCrypt 哈希有机会在内存里多待一会儿，没有任何好处。
+     *
+     * <p><b>返回 {@code User} 而不是直接返回契约类型</b>：record 没有无参构造，
+     * MyBatis 映射它要显式写 {@code <constructor>} resultMap。这里选更朴素的写法，
+     * 转换交给 Service（纯函数，好测）。理由见 {@code UserBrief} 的类注释。
+     *
+     * <p><b>调用方必须保证集合非空</b>：{@code IN ()} 是非法 SQL，
+     * 而它只在"一个 id 都没有"时才会炸——Service 层已短路。
+     */
+    List<User> selectBriefsByIds(@Param("ids") Collection<Long> ids);
 
     User selectByUsername(String username);
 

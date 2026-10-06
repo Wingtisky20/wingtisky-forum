@@ -2,16 +2,18 @@ package com.wingtisky.forum.forum.user.ratelimit;
 
 import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
+import com.wingtisky.forum.common.security.CurrentUser;
 import com.wingtisky.forum.infra.redis.RedisKey;
 import com.wingtisky.forum.infra.redis.SlidingWindowRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.http.HttpMethod;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
+
+import java.util.List;
 
 /**
  * 限流拦截器：把"这次请求该按什么规则限"与"怎么限"接起来。
@@ -46,14 +48,17 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         if (!properties.isEnabled()) {
             return true;
         }
-        RateLimitProperties.Rule rule = matchRule(request.getRequestURI());
+        RateLimitProperties.Rule rule = matchRule(request);
         if (rule == null) {
             return true;
         }
 
+        // Key 里带上方法：同一条路径上的读与写用两套阈值，
+        // 不带方法它们就会共用一个计数器（详见 RedisKey.rateLimit 的说明）
         String key = RedisKey.rateLimit(
                 rule.getDimension().name().toLowerCase(),
                 resolveDimensionValue(rule, request),
+                request.getMethod(),
                 request.getRequestURI());
 
         boolean allowed;
@@ -100,14 +105,43 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         }
     }
 
-    /** 按配置顺序找第一条命中的规则；没有匹配的就不限流。 */
-    private RateLimitProperties.Rule matchRule(String uri) {
+    /**
+     * 按配置顺序找第一条**路径与方法都命中**的规则；没有匹配的就不限流。
+     *
+     * <p><b>⚠️ 方法判断必须并在这里，不能拆到调用处。</b>
+     * 拆出去的话，逻辑会变成"先按路径找到第一条，再看方法对不对，不对就放行"——
+     * 于是 `GET /api/posts` 会先命中 `POST /api/posts` 那条（发帖，10 次/分），
+     * 因为方法不符**径直放行**，后面那条读接口的规则（100 次/分）根本没机会被看到。
+     * **表现是这条接口完全不受限流**，而配置看起来完全正确。
+     * （第一版就是这么写的，被测试逮住。）
+     *
+     * <p><b>顺序仍然要紧</b>：更具体的路径要写在前面。加了方法维度之后多一层讲究——
+     * `POST /api/posts`（发帖，10 次/分）必须排在 `POST /api/**`（其余写接口）之前，
+     * 否则后者会先命中。
+     */
+    private RateLimitProperties.Rule matchRule(HttpServletRequest request) {
         for (RateLimitProperties.Rule rule : properties.getRules()) {
-            if (rule.getPath() != null && pathMatcher.match(rule.getPath(), uri)) {
+            if (rule.getPath() != null
+                    && pathMatcher.match(rule.getPath(), request.getRequestURI())
+                    && methodMatches(rule, request.getMethod())) {
                 return rule;
             }
         }
         return null;
+    }
+
+    /**
+     * 这条规则管不管这个请求方法。**没配方法就是不限方法**。
+     *
+     * <p>用 {@code name()} 比字符串而不是 {@code HttpMethod.matches(...)}：
+     * 前者不依赖 Spring 新增的 API，也不会因为将来多出某个方法而行为变化。
+     */
+    private static boolean methodMatches(RateLimitProperties.Rule rule, String actualMethod) {
+        List<HttpMethod> methods = rule.getMethods();
+        if (methods == null || methods.isEmpty()) {
+            return true;
+        }
+        return methods.stream().anyMatch(m -> m.name().equalsIgnoreCase(actualMethod));
     }
 
     /**
@@ -140,11 +174,8 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     }
 
     private Long currentUserId() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.isAuthenticated()
-                && authentication.getPrincipal() instanceof Long userId) {
-            return userId;
-        }
-        return null;
+        // 委托给公共实现：M2 之前这段逻辑在本类与 AuthzService 里各有一份，
+        // 已收拢到 wt-common 的 CurrentUser（内容域的帖子归属校验也要用同一份）
+        return CurrentUser.id();
     }
 }

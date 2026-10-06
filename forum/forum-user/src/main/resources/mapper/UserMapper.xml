@@ -24,6 +24,21 @@
         WHERE id = #{id} AND deleted = 0
     </select>
 
+    <!-- 跨域展示用的最小投影：只取三列。
+         不写 SELECT * 是有意的——password 是 BCrypt 哈希，跨域展示用不到它，
+         把"少查一列"落在 SQL 上，比落在注释里可靠。
+         空集合由 Service 短路，这里不做 <if> 判断：SQL 里多一个分支，
+         就多一条测不到的路径，而它恰恰是最容易写错的那种。 -->
+    <select id="selectBriefsByIds" resultType="com.wingtisky.forum.forum.user.entity.User">
+        SELECT id, nickname, avatar
+        FROM t_user
+        WHERE deleted = 0
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
     <select id="selectByUsername" resultType="com.wingtisky.forum.forum.user.entity.User">
         SELECT <include refid="Base_Column_List"/>
         FROM t_user

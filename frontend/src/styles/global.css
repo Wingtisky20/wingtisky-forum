@@ -1,0 +1,43 @@
+/*
+ * 全站共用的少量样式。
+ *
+ * 这里只放「所有页面都必须一致的东西」：容器宽度、页面底色、卡片间距。
+ * 具体组件的样式留在各自的 .vue 里——**但数字从这里取**，
+ * 否则页面一多，就会出现"这个页面边距 16px、那个 20px"的不一致，
+ * 而单看每一页都不觉得有问题。
+ */
+
+:root {
+  /* 内容区最大宽度。技术社区以长文为主，太宽会让人读串行 */
+  --wt-content-width: 960px;
+  /* 全站统一的间距刻度 */
+  --wt-gap: 16px;
+  --wt-gap-lg: 24px;
+  /* 页面底色比卡片略深，卡片才能"浮"起来 */
+  --wt-bg: #f5f7fa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--wt-bg);
+  /* Element Plus 的默认字体栈，中文回退到系统字体 */
+  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', Arial, sans-serif;
+}
+
+/* 内容区容器：所有页面共用，保证左右边距一致 */
+.wt-container {
+  width: 100%;
+  max-width: var(--wt-content-width);
+  margin: 0 auto;
+  padding: var(--wt-gap-lg) var(--wt-gap);
+}
+
+/* 列表里的空状态：没有数据时不能是一片白 */
+.wt-empty {
+  padding: 48px 0;
+}

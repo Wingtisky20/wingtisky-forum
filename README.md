@@ -8,17 +8,25 @@
 
 ## 项目状态
 
-**🚧 M0 · 项目启动与协作基建（进行中）**
+**🚧 M2 · 内容域核心 + 前端（收尾中）**
 
 | 阶段 | 状态 |
 |---|---|
 | 需求 / 技术选型 / 架构设计 | ✅ 完成 |
-| Maven 多模块骨架 | 🚧 进行中 |
-| 业务功能 | ❌ 尚未开始 |
+| M0 项目启动与协作基建 | ✅ 完成 |
+| M1 用户域与安全基座 | ✅ 完成 —— 含**亮点 5**：Redis ZSet 滑动窗口限流（含按接口分类的降级） |
+| M2 内容域核心 + 前端 | 🚧 **收尾中** —— 帖子 / 评论 / 标签 / 点赞收藏 / 后台治理 + Vue3 前端 |
+| M3 多级缓存 · M4 Kafka · M5 ES · M6 深翻页 | ❌ 尚未开始 |
+| M7 交易域 · M8 秒杀 · M9 服务化 · M10 压测交付 | ❌ 尚未开始 |
 
-**现在还不跑不起来** —— 骨架和中间件都还没落地。我不想让 README 声称任何还没实现的功能，所以这一节会随进度更新。
+**现在已经能在本地跑起来了**（后端 + 前端），见下面的 [本地运行](#本地运行)。
+
+**验收闸门**：M2 的闸门是「真实 HTTP 走通 `发帖 → 评论 → 列表`」——**已达成**，
+并附了反面对照（未登录发帖 401、改别人的帖子 403、重复点赞计数不变、跨帖回复 400）。
+后续里程碑的闸门见 `docs/STATUS.md`。
 
 > 你可以先看看 `docs/` —— 那里面才是这个项目最有价值的部分：**每个技术决策都记录了当时有哪些候选方案、为什么选了它、代价是什么**。
+> 想知道"某条链路到底怎么走"，看 `docs/05-interview/`——那是从 HTTP 一路讲到数据库的逐行讲解。
 
 ---
 
@@ -96,6 +104,96 @@ app/                                       启动模块
 
 ---
 
+## 本地运行
+
+**前置**：JDK 17 · Maven · Node 18+ · MySQL 8（Windows 服务，常驻）· Redis 5。
+
+本项目**不用 Docker**（ADR-0004），中间件都装在本机。
+
+### 1. 起中间件
+
+```
+# MySQL：装好后是 Windows 服务，通常已经在跑
+# Redis：手动起
+redis-server.exe
+```
+
+> **M2 只需要这两个。** ES 与 Kafka 要到 M3 / M4 / M5 才用得上，现在不用起。
+
+### 2. 建库与建表
+
+（**建库与建账号需要 root 权限，是一次性操作**，见 [`docs/06-runbook/local-setup.md`](docs/06-runbook/local-setup.md)）
+
+```
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum      < db/V1__init_user.sql
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum      < db/V2__init_content.sql
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum_test < db/V1__init_user.sql
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum_test < db/V2__init_content.sql
+```
+
+⚠️ 三件事都不能省，**而且它们出问题时都不会报错**：
+
+- **`--default-character-set=utf8mb4`**：Windows 上 mysql 客户端的默认字符集是 **gbk**，
+  而脚本文件是 UTF-8。不加这个参数时脚本**执行成功、退出码 0、没有任何报错**，
+  但中文会被写坏（转不过去的字符变成 `?`，**不可恢复**）
+- **开发库与测试库都要建**：只建一个的话，集成测试会因为缺表而失败，
+  而那个报错不会提示你来跑这个脚本
+- `V1__` / `V2__` 这种命名**看起来像 Flyway，但本项目没有引入 Flyway**，
+  只是按那个约定命名，靠手工执行
+
+### 3. 配置环境变量
+
+```
+cp .env.example .env
+```
+
+填上 `DB_PASSWORD` 与 `JWT_SECRET`（后者用 `openssl rand -base64 48` 生成，
+HS256 要求至少 32 字节）。**`.env` 已在 `.gitignore` 里，不会入库。**
+
+### 4. 起后端
+
+```
+mvn -pl app -am package -DskipTests
+set -a && source .env && set +a
+java -jar app/target/app-1.0.0-SNAPSHOT.jar
+```
+
+后端在 `http://localhost:8080`。
+
+> 在 IDEA 里也可以直接跑 `WingtiskyForumApplication`，
+> 把 `.env` 里的键值填进 Run Configuration 的环境变量即可。
+
+### 5. 起前端
+
+```
+npm --prefix frontend install
+npm --prefix frontend run dev
+```
+
+打开 `http://localhost:5173`。
+
+> **前端不需要单独配后端地址**：Vite 的 dev server 把 `/api` 代理到 8080，
+> 在浏览器看来前后端是同源的（见 `frontend/vite.config.js` 里的说明）。
+
+### 6. 验证真的跑通了
+
+按 [`docs/06-runbook/api-smoke.http`](docs/06-runbook/api-smoke.http) 从第 1 条往下跑
+（IDEA 直接点箭头，VS Code 装 REST Client 插件也行）。
+
+它不只是"能通"——**每条都写了期望值，而且自带反面对照**：
+未登录发帖应当是 401、改别人的帖子应当 403、重复点赞计数不该变、跨帖回复应当 400。
+**只有"被拒绝"没有"该通过的通过了"，不算证据。**
+
+跑一遍单元测试（**不连数据库**，任何机器上都能跑）：
+
+```
+mvn -B test
+```
+
+末尾出现 `BUILD SUCCESS` 就是全过。
+
+---
+
 ## 文档导航
 
 | 想了解 | 看这里 |
@@ -103,7 +201,9 @@ app/                                       启动模块
 | 项目要做什么、不做什么 | [`docs/00-charter/charter.md`](docs/00-charter/charter.md) |
 | 架构与设计取舍 | [`docs/03-design/architecture.md`](docs/03-design/architecture.md) |
 | **为什么这么选**（含被否决的方案） | [`docs/02-decisions/`](docs/02-decisions/) |
-| 当前进度 | [`docs/STATUS.md`](docs/STATUS.md) |
+| **某条链路怎么走**（从 HTTP 到数据库，逐行） | [`docs/05-interview/`](docs/05-interview/) |
+| 当前进度与待办 | [`docs/STATUS.md`](docs/STATUS.md) |
+| 环境怎么搭 | [`docs/06-runbook/local-setup.md`](docs/06-runbook/local-setup.md) |
 | 踩过的坑 | [`docs/06-runbook/troubleshooting.md`](docs/06-runbook/troubleshooting.md) |
 
 ---

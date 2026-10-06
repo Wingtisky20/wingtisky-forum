@@ -73,6 +73,15 @@ public class SecurityConfig {
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         // 个人主页是公开的：未登录也能看别人的主页
                         .requestMatchers(HttpMethod.GET, "/api/users/*").permitAll()
+                        // M2：帖子列表、详情、某人的帖子——公开。
+                        // 技术社区的内容本来就能匿名浏览，登录只在"要写东西"时才需要。
+                        // ⚠️ 只放行 GET：同一个 /api/posts 路径上的 POST（发帖）仍然要认证。
+                        .requestMatchers(HttpMethod.GET, "/api/posts", "/api/posts/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/users/*/posts").permitAll()
+                        // 评论列表同样公开；发评论（POST 同一路径）与删评论仍要认证
+                        .requestMatchers(HttpMethod.GET, "/api/posts/*/comments").permitAll()
+                        // 标签列表公开。标签只在发帖时产生，没有"新建标签"的接口
+                        .requestMatchers(HttpMethod.GET, "/api/tags").permitAll()
                         // 剩下的全部需要认证。**用 anyRequest().authenticated() 而不是
                         // 逐个列出要保护的路径**——漏列一个的后果是那个接口完全敞开，
                         // 而这种漏洞不会报错，只会静静存在。

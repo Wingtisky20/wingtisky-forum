@@ -27,6 +27,7 @@ DOC_PATHS=(CLAUDE.md README.md
            docs/02-decisions
            docs/03-design
            docs/04-log
+           docs/05-interview
            docs/06-runbook)
 
 # 12 个叶子模块（forum/ trade/ seckill/ 三个域聚合目录本身不含 .java，不列入）
