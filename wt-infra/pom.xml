@@ -55,16 +55,41 @@
       <artifactId>mysql-connector-j</artifactId>
     </dependency>
 
-    <!-- Redis 客户端。
-         用的是 Spring 官方 starter（底层 Lettuce），**不是 Redisson**：
-         本项目对 Redis 的用法是"执行 Lua 脚本 + 存取字符串/有序集合"，
-         RedisTemplate 是这条路径的标准工具，资料也最多。
-         Redisson 的强项是分布式锁与分布式对象，留给 M8 的亮点 7。
+    <!-- Redis 客户端（一）：Spring 官方 starter（底层 Lettuce）。
+         本项目对 Redis 的**读写与脚本**用法都走这条路：令牌、限流计数、
+         以及 M3 起的缓存读写 —— "执行 Lua + 存取字符串"正是 RedisTemplate 的主场。
 
-         代价：M8 起会有两个 Redis 客户端共存，届时要分清各自用途。 -->
+         ⚠️ 2026-10-06 修订：本注释原文写着「Redisson 的强项是分布式锁与分布式对象，
+         **留给 M8 的亮点 7**」「代价：M8 起会有两个 Redis 客户端共存」。
+         那个说法与 spec §5.1 冲突 —— **亮点 1（M3 的多级缓存）的防击穿设计本来就是
+         Redisson 锁**，不必等到 M8。详见 docs/03-design/m3-cache.md §5。
+
+         「变更留痕」的落地方式是：**不删上面的原话**，只追加这段修订。
+         原文的结论"两个客户端共存、要分清用途"仍然成立，只是共存的时间
+         从 M8 提前到了 M3：
+           · Lettuce（本依赖）—— 读写与 Lua 脚本
+           · Redisson（下一个依赖）—— 只用于分布式锁
+         曾经担心"两个客户端容易混"；实际的分界很干脆：**要锁语义才用 Redisson**。 -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+
+    <!-- Redis 客户端（二）：Redisson。**只用于分布式锁**（M3 防击穿、M8 亮点 7）。
+         版本由父 POM 的 dependencyManagement 管（3.52.0），这里不写。
+
+         ⚠️ 高危区（CLAUDE.md 防幻觉闸门 5）：这个 starter 会装配自己的连接工厂，
+         **有可能顶掉上面那个 Lettuce 的**。后果是隐蔽的 —— 不是启动报错，
+         而是令牌刷新 / 限流在某次请求上出错。所以接入后的第一关**不是**新功能，
+         而是**已有功能回归**：登录 / 刷新令牌 / 连续登录触发限流，三条都要照跑。
+         回归挂了 → 改用 org.redisson:redisson 核心包 + 手写 @Bean 只暴露 RedissonClient。
+
+         ⚠️ 本机 Redis 是 5.0.14.1（Windows 原生构建的天花板），而 Redisson 3.52.0
+         可能用到 Redis 6+ 的命令。装上就要实测（已记在 STATUS 待核实表），
+         报 ERR unknown command 则降级并修订 ADR-0001。 -->
+    <dependency>
+      <groupId>org.redisson</groupId>
+      <artifactId>redisson-spring-boot-starter</artifactId>
     </dependency>
   </dependencies>
 </project>
