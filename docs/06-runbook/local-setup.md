@@ -148,6 +148,28 @@ Failed to instantiate [org.redisson.api.RedissonClient]:
 
 **所以：跑应用之前，先 `redis-cli PING` 确认它活着。**
 
+### 4.1 排查数据时要知道的一件事：浏览数是**最终一致**的
+
+**M3 起，`t_post.view_count` 不是每次被人看就立刻更新。** 读详情时浏览数只涨在 Redis
+计数器（`wt:cache:post:view:<id>`）里，**每 30 秒**才回写一次数据库。
+
+所以下面这种情况**不是 bug**：
+
+- 刚读了某篇帖子，**去库里查 `view_count` 还是旧值** → 等一次回写就到了；
+- 反过来，**Redis 重启会丢掉最近一段没回写的增量** → 这是有意接受的代价
+  （见 `PostViewCounter` 的类注释，以及 `architecture.md` §2.1：
+  这个域的一致性要求就是"最终一致可接受（浏览数）"）。
+
+想立刻核对，用这两条：
+
+```bash
+redis-cli GET "wt:cache:post:view:<id>"              # Redis 里的当前值
+redis-cli SISMEMBER "wt:cache:post:view:dirty" "<id>" # 1 = 还没回写
+```
+
+> **它换来的是**：读详情这条路上**一次数据库写都没有**了。M2 时每看一次就要
+> `UPDATE t_post SET view_count = view_count + 1`——那恰恰是全站最频繁的写。
+
 ---
 
 ## 5. Elasticsearch 8.18.3 + IK（本次新装）

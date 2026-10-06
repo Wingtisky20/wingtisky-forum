@@ -96,8 +96,12 @@
          回归挂了 → 改用 org.redisson:redisson 核心包 + 手写 @Bean 只暴露 RedissonClient。
 
          ⚠️ 本机 Redis 是 5.0.14.1（Windows 原生构建的天花板），而 Redisson 3.52.0
-         可能用到 Redis 6+ 的命令。装上就要实测（已记在 STATUS 待核实表），
-         报 ERR unknown command 则降级并修订 ADR-0001。 -->
+         可能用到 Redis 6+ 的命令。装上就要实测，报 ERR unknown command 则降级并
+         修订 ADR-0001。
+
+         ✅ 2026-10-06 实测结论：**兼容**。加锁 / 释放 / 看门狗参数在 5.0.14.1 上都正常，
+         没有 ERR unknown command。**无需降级、无需修订 ADR-0001**；STATUS 里那条
+         挂了很久的待核实项就此关闭。守着它的测试是 `RedissonSmokeIntegrationTest`。 -->
     <dependency>
       <groupId>org.redisson</groupId>
       <artifactId>redisson-spring-boot-starter</artifactId>
