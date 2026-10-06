@@ -64,11 +64,14 @@ class PostServiceTest {
     @Mock
     private TagService tagService;
 
+    @Mock
+    private InteractionService interactionService;
+
     private PostService postService;
 
     @BeforeEach
     void setUp() {
-        postService = new PostService(postMapper, userQueryService, tagService);
+        postService = new PostService(postMapper, userQueryService, tagService, interactionService);
     }
 
     private static Post post(long id, long authorId, String title) {
@@ -258,7 +261,7 @@ class PostServiceTest {
             when(userQueryService.findBrief(10L))
                     .thenReturn(Optional.of(new UserBrief(10L, "甲", null)));
 
-            PostDetail detail = postService.getDetail(1L);
+            PostDetail detail = postService.getDetail(1L, 7L);
 
             verify(postMapper).incrementViewCount(1L);
             assertThat(detail.viewCount()).as("响应里的数字要和数据库里的一致").isEqualTo(8);
@@ -267,11 +270,45 @@ class PostServiceTest {
         }
 
         @Test
+        @DisplayName("详情里带上『我点过赞/收藏没』——前端的按钮要靠它显示选中状态")
+        void shouldReportViewerInteraction() {
+            Post p = post(1L, 10L, "标题");
+            p.setContent("正文");
+            when(postMapper.selectById(1L)).thenReturn(p);
+            when(userQueryService.findBrief(10L)).thenReturn(Optional.empty());
+            when(interactionService.liked(1L, 7L)).thenReturn(true);
+            when(interactionService.collected(1L, 7L)).thenReturn(false);
+
+            PostDetail detail = postService.getDetail(1L, 7L);
+
+            assertThat(detail.liked()).isTrue();
+            assertThat(detail.collected()).isFalse();
+        }
+
+        @Test
+        @DisplayName("未登录看详情时，不去查『有没有点过赞』")
+        void shouldNotQueryInteractionForAnonymousViewer() {
+            Post p = post(1L, 10L, "标题");
+            p.setContent("正文");
+            when(postMapper.selectById(1L)).thenReturn(p);
+            when(userQueryService.findBrief(10L)).thenReturn(Optional.empty());
+
+            PostDetail detail = postService.getDetail(1L, null);
+
+            assertThat(detail.liked()).isFalse();
+            assertThat(detail.collected()).isFalse();
+            // 注意这里**不断言**"没调过 interactionService"——在这一层它是 mock，
+            // 调用确实会发生。真正"不查库"的保证在 InteractionService 内部，
+            // 由它自己的测试用 verifyNoInteractions(postLikeMapper) 覆盖。
+            // （这条是我第一版写错了：把别人的职责当成这一层的断言。）
+        }
+
+        @Test
         @DisplayName("帖子不存在 → A0201，且不会去动浏览数")
         void shouldThrowWhenPostMissing() {
             when(postMapper.selectById(999L)).thenReturn(null);
 
-            assertThatThrownBy(() -> postService.getDetail(999L))
+            assertThatThrownBy(() -> postService.getDetail(999L, null))
                     .isInstanceOf(BizException.class)
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
