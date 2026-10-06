@@ -1,0 +1,23 @@
+# 依赖与构建产物绝不入库
+node_modules/
+dist/
+dist-ssr/
+
+# 本地环境文件
+*.local
+.env
+.env.*
+!.env.example
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 前端不需要构建缓存
+.vite/
