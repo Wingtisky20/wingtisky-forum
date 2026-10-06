@@ -333,8 +333,19 @@ ADR 必须按下面这张表写——**只写"我选了同步删"而没有被否
    **所以 M3 的 Task 1 就是这件事**：加依赖 → 启动 → **回归登录 / 刷新 / 限流三个已有功能**。
    若冲突，改用 `redisson` 核心包 + 手动装配客户端 Bean（只拿 `RedissonClient`，
    不碰连接工厂）。
-3. 待核实表里的 **Redisson 3.52.0 × Redis 5.0.14.1 运行时兼容性**在同一次实测里验掉。
-   若报 `ERR unknown command`，降版本并写 ADR 修订。
+3. **Redisson 的默认编解码器是二进制的（Kryo），和本项目在用的纯字符串不通用。**
+   这条是 Task 1 写冒烟测试时**实测踩出来的**：拿 Redisson 的 `getBucket(key)`
+   去读 `StringRedisTemplate` 写的明文，直接抛
+   `KryoException: Encountered unregistered class ID: 117`——它在拿 Kryo 的格式解一段明文。
+   **本设计不受影响**（Redisson 只用于锁，锁的值是它自己生成的，不与其他客户端交换数据），
+   但这是一条必须记住的边界：**将来若有人用 Redisson 的 `RBucket` / `RMap` 存业务数据，
+   必须显式指定 `StringCodec` 或 `JsonCodec`**，否则写进去的是二进制——
+   RedisInsight 里看着是乱码，`StringRedisTemplate` 也读不出来，而且不会报错。
+
+4. **待核实表里「Redisson 3.52.0 × Redis 5.0.14.1 运行时兼容性」已实测：通过。**
+   加锁 / 释放 / 看门狗参数都正常，无 `ERR unknown command`。
+   同时确认了它没有顶掉原来的 Lettuce 连接工厂（两条路各有一个测试守着）。
+   这个挂了很久的待核实项由此关闭——结论已回填 `docs/STATUS.md`。
 
 ---
 
