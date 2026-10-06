@@ -166,6 +166,31 @@ wt:
         window: 1m
         fallback: open
 
+  # ------------------------------------------------------------
+  # 多级缓存（亮点 1）
+  #
+  # ⚠️ 这些数字是**初始值**，M10 压测时校准。与上面限流那段同理：
+  #    校准是"试几组值比一比"的活，写死的话每改一次都要重新编译。
+  #
+  # ⚠️ `enabled` 不只是"出事时的紧急开关"，它是**闸门实验的分组开关**：
+  #    实验要拿「纯 MySQL」与「三级缓存」两组比命中率和延迟，
+  #    而两组必须是**同一份代码、只翻这一个开关**——否则差值里混着重构的影响，
+  #    说明不了缓存的作用。所以它必须真的能关掉缓存，这条由
+  #    `PostDetailCacheSwitchIntegrationTest` 对着真实 Redis 守着。
+  #
+  # 各档时长为什么是这个量级，见 `CachePolicy` 与 `CacheProperties` 的类注释。
+  # ------------------------------------------------------------
+  cache:
+    post-detail:
+      enabled: true
+      l1-ttl: 45s            # 进程内那份。**必须短**：广播丢消息时靠它兜底
+      l2-ttl: 5m             # Redis 里那份的基准值
+      l2-ttl-jitter: 60s     # 实际 TTL = 5m + random(0, 60s)，防雪崩
+      null-ttl: 60s          # "这篇帖子不存在"的墓碑。**必须短**
+      lock-wait: 500ms       # 抢不到回源锁时最多等多久，超时降级回源
+    view-count:
+      flush-interval: 30s    # 浏览数从 Redis 回写进库的间隔
+
 mybatis:
   # classpath*: 前缀支持从多个 jar 中加载 mapper XML（M2 之后会有多个模块各带自己的 XML）
   mapper-locations: classpath*:mapper/**/*.xml

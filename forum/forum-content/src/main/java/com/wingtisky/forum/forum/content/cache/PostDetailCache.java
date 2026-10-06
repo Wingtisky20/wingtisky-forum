@@ -1,12 +1,10 @@
 package com.wingtisky.forum.forum.content.cache;
 
-import com.wingtisky.forum.infra.cache.CachePolicy;
 import com.wingtisky.forum.infra.cache.TwoLevelCache;
 import com.wingtisky.forum.infra.redis.RedisKey;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.function.Supplier;
 
 /**
@@ -32,30 +30,20 @@ import java.util.function.Supplier;
 @Component
 public class PostDetailCache {
 
-    /**
-     * 存活策略。**Task 9 会把它挪进 `application.yml`**（设计稿 §8）。
-     *
-     * <p>现在先写成常量：它们是**初始值**，M10 压测时才校准；
-     * 但把它提前挪进配置会让 Task 9 无事可做，而配置项与开关是一整套东西
-     * （总开关、各档时长、回写间隔），一次做完才好验证"开关真的能关掉缓存"。
-     *
-     * <p>五档各为什么是这个量级，见 {@link CachePolicy} 的类注释。
-     */
-    private static final CachePolicy POLICY = new CachePolicy(
-            Duration.ofSeconds(45),     // L1：短——它是发布订阅丢消息时的兜底
-            Duration.ofMinutes(5),      // L2 基准
-            Duration.ofSeconds(60),     // 抖动：防雪崩
-            Duration.ofSeconds(60),     // 墓碑：必须短（"不存在"随时可能变成"存在"）
-            Duration.ofMillis(500));    // 抢不到回源锁最多等 500ms
-
     private final TwoLevelCache cache;
+    private final CacheProperties properties;
 
-    public PostDetailCache(TwoLevelCache cache) {
+    public PostDetailCache(TwoLevelCache cache, CacheProperties properties) {
         this.cache = cache;
+        this.properties = properties;
     }
 
     /**
      * 取一条帖子的缓存部分。
+     *
+     * <p><b>总开关关掉时直接回源、一个 Redis key 都不写。</b> 那是闸门实验里的
+     * 「纯 MySQL」那一组：两组必须只差这一个变量，否则比出来的差值里混着别的东西，
+     * 说明不了缓存的作用——**而实验结论看起来会很像真的**。
      *
      * @param loader 回源函数。**返回 {@code null} 表示这条帖子不存在**
      *               （或已删/已下架到看不成的程度）——那时会写一枚短命的墓碑，
@@ -63,7 +51,12 @@ public class PostDetailCache {
      */
     @Nullable
     public CachedPostDetail get(Long postId, Supplier<CachedPostDetail> loader) {
-        return cache.get(RedisKey.cachePostDetail(postId), CachedPostDetail.class, POLICY, loader);
+        CacheProperties.PostDetail config = properties.postDetail();
+        if (!config.enabled()) {
+            return loader.get();
+        }
+        return cache.get(RedisKey.cachePostDetail(postId), CachedPostDetail.class,
+                config.toPolicy(), loader);
     }
 
     /**
@@ -78,6 +71,9 @@ public class PostDetailCache {
      * {@code TwoLevelCache.evictAfterCommit}）。它留给"本来就不在事务里"的场景。
      */
     public void evict(Long postId) {
+        if (!properties.postDetail().enabled()) {
+            return;
+        }
         cache.evict(RedisKey.cachePostDetail(postId));
     }
 
@@ -88,11 +84,11 @@ public class PostDetailCache {
      * 三条理由都写在 {@code TwoLevelCache.evictAfterCommit} 上，这里不重复。
      */
     public void evictAfterCommit(Long postId) {
+        if (!properties.postDetail().enabled()) {
+            // 开关关掉 = 缓存这一层等于不存在：读不写、写也不删。
+            // 每次写仍去 Redis 跑一趟 DEL + 一次广播，是白跑的网络往返
+            return;
+        }
         cache.evictAfterCommit(RedisKey.cachePostDetail(postId));
-    }
-
-    /** 当前策略（测试与观测用）。 */
-    public static CachePolicy policy() {
-        return POLICY;
     }
 }
