@@ -70,6 +70,17 @@
            · Lettuce（本依赖）—— 读写与 Lua 脚本
            · Redisson（下一个依赖）—— 只用于分布式锁
          曾经担心"两个客户端容易混"；实际的分界很干脆：**要锁语义才用 Redisson**。 -->
+    <!-- ⚠️ 2026-10-06 实测更正：上面这段"两个客户端各管一摊"的结论**是错的**。
+         redisson-spring-boot-starter 会装配自己的 RedisConnectionFactory，
+         而 Spring Boot 那个 Lettuce 的因为 @ConditionalOnMissingBean 直接退让了——
+         **注入给应用的 StringRedisTemplate 本身就是 Redisson 实现的**。
+         证据：Task 4 收尾时一次启动失败的堆栈里写着
+         `Error creating bean with name 'stringRedisTemplate'
+          defined in ... RedissonAutoConfigurationV2.class`。
+         现在 RedissonSmokeIntegrationTest 有一条断言把这件事钉死。
+
+         所以：lettuce-core 还在 classpath 上，但**没在跑**。
+         不再有"两条路各自在跑"这回事。详见 docs/03-design/m3-cache.md §5。 -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-redis</artifactId>

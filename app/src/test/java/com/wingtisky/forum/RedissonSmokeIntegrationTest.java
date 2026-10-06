@@ -9,6 +9,7 @@ import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -55,6 +56,10 @@ class RedissonSmokeIntegrationTest {
     @Autowired
     private StringRedisTemplate redis;
 
+    /** 用来**实测** Spring Data Redis 到底跑在哪个连接工厂上（见下面的用例）。 */
+    @Autowired
+    private RedisConnectionFactory connectionFactory;
+
     @Test
     @DisplayName("starter 自动装配出了 RedissonClient")
     void clientIsAutoConfigured() {
@@ -82,15 +87,39 @@ class RedissonSmokeIntegrationTest {
     }
 
     @Test
-    @DisplayName("【关键】Lettuce 那条路仍然能读写——两个客户端没有互相顶掉")
-    void lettucePathStillWorks() {
-        String key = "wt:test:redisson-smoke:lettuce";
+    @DisplayName("StringRedisTemplate 仍然能读写——M1/M2 已有的功能没被打断")
+    void stringRedisTemplateStillWorks() {
+        String key = "wt:test:redisson-smoke:template";
         try {
-            redis.opsForValue().set(key, "written-by-lettuce", Duration.ofSeconds(10));
-            assertThat(redis.opsForValue().get(key)).isEqualTo("written-by-lettuce");
+            redis.opsForValue().set(key, "ok", Duration.ofSeconds(10));
+            assertThat(redis.opsForValue().get(key)).isEqualTo("ok");
         } finally {
             redis.delete(key);
         }
+    }
+
+    @Test
+    @DisplayName("【实测结论】Spring Data Redis 跑在 Redisson 的连接工厂上，**不是 Lettuce**")
+    void springDataRedisRunsOnRedissonConnectionFactory() {
+        // ⚠️ 这条断言纠正了本类第一版的一个错误结论。
+        //
+        // 第一版这里写着"Lettuce 那条路仍然能读写"，并据此宣称
+        // "两个 Redis 客户端共存、各管一摊"。**那是错的**：
+        // redisson-spring-boot-starter 的自动配置会装配自己的
+        // RedisConnectionFactory，而 Spring Boot 那个 Lettuce 的
+        // 因为 @ConditionalOnMissingBean 直接退让了。
+        //
+        // 证据是 2026-10-06 一次启动失败的堆栈：
+        //   Error creating bean with name 'stringRedisTemplate'
+        //     defined in ... org/redisson/spring/starter/RedissonAutoConfigurationV2.class
+        // 也就是说，**注入给我们的那个 StringRedisTemplate 本身就是 Redisson 实现的**。
+        //
+        // 结论：本项目 Redis 的访问路径实际上已经被统一到 Redisson 一条；
+        // "两个客户端共存"只成立在"lettuce-core 还在 classpath 上"这个意义上，
+        // 不成立在"两条路各自在跑"这个意义上。
+        assertThat(connectionFactory.getClass().getName())
+                .as("Spring Data Redis 的连接工厂应当来自 Redisson")
+                .contains("Redisson");
     }
 
     @Test

@@ -326,6 +326,25 @@ ADR 必须按下面这张表写——**只写"我选了同步删"而没有被否
    缓存读写）与 Redisson（只用于锁）。**要能说清各自为什么在这儿**：
    锁有"续期、可重入、安全释放"这些语义，Redisson 是专门做这个的；
    而简单的读写与 Lua，`StringRedisTemplate` 够用且更直接。
+
+   > **⚠️ 2026-10-06 实测更正：上面这段的结论是错的。**
+   > `redisson-spring-boot-starter` 的自动配置会装配自己的 `RedisConnectionFactory`，
+   > 而 Spring Boot 那个 Lettuce 的因为 `@ConditionalOnMissingBean` **直接退让了**。
+   > 也就是说：**注入给应用的 `StringRedisTemplate` 本身就是 Redisson 实现的**，
+   > 令牌、限流、缓存读写全都跑在 Redisson 的连接工厂上。
+   >
+   > 证据是 Task 4 收尾时一次启动失败的堆栈：
+   >
+   > ```
+   > Error creating bean with name 'stringRedisTemplate'
+   >   defined in ... org/redisson/spring/starter/RedissonAutoConfigurationV2.class
+   > ```
+   >
+   > 现在 `RedissonSmokeIntegrationTest` 里有一条断言**把这件事钉死**。
+   >
+   > **正确的说法是**：`lettuce-core` 还在 classpath 上，但**没有在跑**。
+   > "两个客户端各管一摊"不成立；实际是 Redisson 一条路走到底。
+   > 这一条不影响功能（所有测试都过），但**它是个事实**，而原来那句是假的。
 2. **`redisson-spring-boot-starter` 会不会动到现有的 Lettuce 连接工厂** ——
    这是**高危区**（CLAUDE.md 防幻觉闸门 5 点名了 Redisson）。
    Redisson 的 Spring Boot starter 会装配自己的连接工厂，**有可能顶掉 M1/M2 在用的那个**，
