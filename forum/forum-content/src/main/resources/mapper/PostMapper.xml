@@ -141,11 +141,19 @@
         WHERE id = #{id} AND deleted = 0
     </update>
 
-    <!-- view_count = view_count + 1 是**单条语句**，并发安全；
-         换成"先查再写"就会丢更新。 -->
-    <update id="incrementViewCount">
+    <!-- 只取浏览数一列。**只在 Redis 计数器不存在时**用到（播种），
+         正常读详情不查它——见 PostMapper#selectViewCount 的说明。 -->
+    <select id="selectViewCount" resultType="java.lang.Integer">
+        SELECT view_count
+        FROM t_post
+        WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <!-- 定时回写：写成**绝对值**而不是 +1，这样回写是幂等的
+         （重复执行结果一样），而增量写法在"写成功但没标记完成"时会重复累加。 -->
+    <update id="updateViewCount">
         UPDATE t_post
-        SET view_count = view_count + 1
+        SET view_count = #{viewCount}
         WHERE id = #{id} AND deleted = 0
     </update>
 

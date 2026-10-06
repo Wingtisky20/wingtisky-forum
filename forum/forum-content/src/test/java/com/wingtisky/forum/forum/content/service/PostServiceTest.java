@@ -4,11 +4,15 @@ import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
 import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.domain.user.UserQueryService;
+import com.wingtisky.forum.forum.content.cache.CachedPostDetail;
+import com.wingtisky.forum.forum.content.cache.PostDetailCache;
 import com.wingtisky.forum.forum.content.dto.PageResult;
+import com.wingtisky.forum.forum.content.cache.PostViewCounter;
 import com.wingtisky.forum.forum.content.dto.PostDetail;
 import com.wingtisky.forum.forum.content.dto.PostListItem;
 import com.wingtisky.forum.forum.content.dto.PostQuery;
 import com.wingtisky.forum.forum.content.dto.PostSort;
+import com.wingtisky.forum.forum.content.dto.TagView;
 import com.wingtisky.forum.forum.content.entity.Post;
 import com.wingtisky.forum.forum.content.mapper.PostMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,6 +40,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -67,11 +73,36 @@ class PostServiceTest {
     @Mock
     private InteractionService interactionService;
 
+    /** 浏览数的计数器（M3 起它接手了"读接口里带写"那件事）。 */
+    @Mock
+    private PostViewCounter postViewCounter;
+
+    /** 帖子详情的缓存。**策略层**——这里把机制那一段换成一个可控的替身。 */
+    @Mock
+    private PostDetailCache postDetailCache;
+
     private PostService postService;
 
     @BeforeEach
     void setUp() {
-        postService = new PostService(postMapper, userQueryService, tagService, interactionService);
+        postService = new PostService(postMapper, userQueryService, tagService, interactionService,
+                postViewCounter, postDetailCache);
+
+        // 默认把缓存演成"永远不命中"：老实调回源函数，再把它的结果原样返回。
+        // 这样 M2 那一批只 mock 了 Mapper 的用例原样继续有效——它们描述的正是
+        // **回源那条路**，不该因为上面多了一层缓存就失效。
+        // "命中"由各用例自己 thenReturn 一个缓存对象来演。
+        //
+        // lenient：并非每个用例都会走到详情（发帖、列表、改帖都不走），
+        // 严格模式会把"没用上的桩"当错误报出来。
+        lenient().when(postDetailCache.get(anyLong(), any()))
+                .thenAnswer(inv -> {
+                    Supplier<?> loader = inv.getArgument(1);
+                    // 必须挡 null：录制别的桩时（`when(postDetailCache.get(...))` 那一行），
+                    // Mockito 传进来的占位参数就是 null，而这条桩已经生效了。
+                    // 不挡的话，会在**写测试的那一行**炸出一个和被测代码毫无关系的 NPE。
+                    return loader == null ? null : loader.get();
+                });
     }
 
     private static Post post(long id, long authorId, String title) {
@@ -94,6 +125,21 @@ class PostServiceTest {
         p.setCollectCount(0);
         p.setCreateTime(LocalDateTime.of(2026, 10, 5, 12, 0));
         return p;
+    }
+
+    /**
+     * 造一个"已经在缓存里"的详情——各用例用 {@code thenReturn} 它来演"命中缓存"。
+     *
+     * @param visible 这条帖子本身可不可见（未被下架、未被删除）。已下架的帖子
+     *                也会进缓存（作者与版主还要打开它），所以这两个参数是分开的
+     */
+    private static CachedPostDetail cached(long id, long authorId, String title,
+                                           boolean visible, boolean offline) {
+        LocalDateTime t = LocalDateTime.of(2026, 10, 5, 12, 0);
+        return new CachedPostDetail(id, title, "正文", authorId,
+                new UserBrief(authorId, "甲", null),
+                visible, false, false, offline,
+                2, 3, 4, List.of(new TagView(9L, "Redis", 1)), t, t);
     }
 
     private static BizException errorCodeOf(Throwable e) {
@@ -258,19 +304,26 @@ class PostServiceTest {
     class Detail {
 
         @Test
-        @DisplayName("给浏览数 +1，且返回的数字把本次访问算上")
-        void shouldIncrementViewCount() {
+        @DisplayName("浏览数走 Redis 计数器；响应里的数字就是计数器返回的新值")
+        void shouldCountViewThroughRedisCounter() {
             Post p = post(1L, 10L, "标题");
             p.setContent("正文");
             p.setViewCount(7);
             when(postMapper.selectById(1L)).thenReturn(p);
             when(userQueryService.findBrief(10L))
                     .thenReturn(Optional.of(new UserBrief(10L, "甲", null)));
+            // 计数器返回的就是"含本次访问"的新值。M2 时这一步靠手工 +1，
+            // 所以那时才要在注释里解释"响应里的数字和库里差 1"——现在不需要了。
+            when(postViewCounter.increment(eq(1L), any())).thenReturn(8L);
 
             PostDetail detail = postService.getDetail(1L, 7L, false);
 
-            verify(postMapper).incrementViewCount(1L);
-            assertThat(detail.viewCount()).as("响应里的数字要和数据库里的一致").isEqualTo(8);
+            verify(postViewCounter).increment(eq(1L), any());
+            // **这条才是重点**：读详情不该再写库。
+            // 把浏览数搬去 Redis 的收益就是这一条，而它只有靠"断言没发生写"才守得住
+            // ——"响应里的数字对了"证明不了没写库。
+            verify(postMapper, never()).updateViewCount(anyLong(), anyInt());
+            assertThat(detail.viewCount()).isEqualTo(8);
             assertThat(detail.content()).isEqualTo("正文");
             assertThat(detail.author().nickname()).isEqualTo("甲");
         }
@@ -319,7 +372,94 @@ class PostServiceTest {
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
 
-            verify(postMapper, never()).incrementViewCount(anyLong());
+            verify(postViewCounter, never()).increment(anyLong(), any());
+        }
+
+        // ---------- M3 Task 8：详情接上缓存 ----------
+
+        @Test
+        @DisplayName("★ 命中缓存时**一次库都不查**——缓存的意义全在这一条")
+        void shouldNotTouchDatabaseWhenCacheHits() {
+            when(postDetailCache.get(eq(1L), any()))
+                    .thenReturn(cached(1L, 10L, "缓存里的标题", true, false));
+            when(postViewCounter.increment(eq(1L), any())).thenReturn(42L);
+
+            PostDetail detail = postService.getDetail(1L, null, false);
+
+            assertThat(detail.title()).isEqualTo("缓存里的标题");
+            assertThat(detail.tags()).hasSize(1);
+            // 浏览数**不来自缓存**——缓存对象里压根没有这个字段，它由计数器给
+            assertThat(detail.viewCount()).isEqualTo(42);
+
+            // 下面三条才是重点。"响应里的字段都对"靠别的写法也能通过，
+            // 只有"没查过库"能证明缓存真的生效了。
+            verifyNoInteractions(postMapper);
+            verifyNoInteractions(userQueryService);
+            verifyNoInteractions(tagService);
+        }
+
+        @Test
+        @DisplayName("未命中时回源：帖子、作者、标签一次取齐，组装成详情")
+        void shouldAssembleEverythingOnCacheMiss() {
+            Post p = post(1L, 10L, "库里的标题");
+            p.setContent("库里的正文");
+            p.setLikeCount(3);
+            when(postMapper.selectById(1L)).thenReturn(p);
+            when(userQueryService.findBrief(10L))
+                    .thenReturn(Optional.of(new UserBrief(10L, "甲", null)));
+            List<TagView> tags = List.of(new TagView(9L, "Redis", 1));
+            when(tagService.listByPost(1L)).thenReturn(tags);
+            when(postViewCounter.increment(eq(1L), any())).thenReturn(1L);
+
+            PostDetail detail = postService.getDetail(1L, null, false);
+
+            assertThat(detail.title()).isEqualTo("库里的标题");
+            assertThat(detail.content()).isEqualTo("库里的正文");
+            assertThat(detail.likeCount()).isEqualTo(3);
+            assertThat(detail.author().nickname()).isEqualTo("甲");
+            assertThat(detail.tags()).isEqualTo(tags);
+            verify(postDetailCache).get(eq(1L), any());
+        }
+
+        @Test
+        @DisplayName("★★ 安全：缓存里那条**正是已下架**的帖子时，匿名读仍然是 404")
+        void offlinePostInCacheIsStillHiddenFromAnonymous() {
+            // 已下架的帖子**会**正常进缓存——作者与版主还要打开它。
+            // 所以"缓存里有"绝不能等价于"谁都能看"：可见性必须在缓存之外重判，
+            // 否则一篇被下架的帖子被缓存之后，匿名用户就能拿到正文了。
+            when(postDetailCache.get(eq(1L), any()))
+                    .thenReturn(cached(1L, 10L, "被下架的帖子", false, true));
+
+            assertThatThrownBy(() -> postService.getDetail(1L, null, false))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
+                            .isEqualTo(ErrorCode.POST_NOT_FOUND));
+
+            // 看不见的东西，连浏览数都不该记
+            verify(postViewCounter, never()).increment(anyLong(), any());
+        }
+
+        @Test
+        @DisplayName("★ 缓存里那条已下架的帖子，作者本人仍然打得开，且 offline 标记还在")
+        void offlinePostInCacheIsVisibleToItsAuthor() {
+            when(postDetailCache.get(eq(1L), any()))
+                    .thenReturn(cached(1L, 10L, "被下架的帖子", false, true));
+            when(postViewCounter.increment(eq(1L), any())).thenReturn(1L);
+
+            PostDetail detail = postService.getDetail(1L, 10L, false);
+
+            assertThat(detail.title()).isEqualTo("被下架的帖子");
+            assertThat(detail.offline()).as("要告诉作者这篇被下架了").isTrue();
+        }
+
+        @Test
+        @DisplayName("★ 缓存里那条已下架的帖子，版主也打得开")
+        void offlinePostInCacheIsVisibleToModerator() {
+            when(postDetailCache.get(eq(1L), any()))
+                    .thenReturn(cached(1L, 10L, "被下架的帖子", false, true));
+            when(postViewCounter.increment(eq(1L), any())).thenReturn(1L);
+
+            assertThat(postService.getDetail(1L, 999L, true).title()).isEqualTo("被下架的帖子");
         }
     }
 
@@ -424,7 +564,7 @@ class PostServiceTest {
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
 
             // 当作不存在，而不是 403——403 等于告诉对方"这个 id 是存在的"
-            verify(postMapper, never()).incrementViewCount(anyLong());
+            verify(postViewCounter, never()).increment(anyLong(), any());
         }
 
         @Test
@@ -474,6 +614,39 @@ class PostServiceTest {
             when(userQueryService.findBrief(anyLong())).thenReturn(Optional.empty());
 
             assertThat(postService.getDetail(1L, null, false).offline()).isFalse();
+        }
+
+        // ---------- M3 Task 7：治理动作的失效 ----------
+
+        @Test
+        @DisplayName("★ 下架之后要删缓存——这是「下架后 45 秒内匿名还看得到」那个洞的堵法")
+        void shouldEvictOnTakingOffline() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "正常帖子"));
+
+            postService.administrate(1L, 99L, null, null, Post.STATUS_OFFLINE);
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("只改置顶 / 加精也要删缓存——top 与 featured 都在缓存对象里")
+        void shouldEvictOnTopping() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "正常帖子"));
+
+            postService.administrate(1L, 99L, true, true, null);
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("治理一条不存在的帖子 → 不删缓存（什么都没改）")
+        void shouldNotEvictWhenAdministeringMissingPost() {
+            when(postMapper.selectById(999L)).thenReturn(null);
+
+            assertThatThrownBy(() -> postService.administrate(999L, 99L, true, null, null))
+                    .isInstanceOf(BizException.class);
+
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
         }
     }
 
@@ -585,6 +758,49 @@ class PostServiceTest {
 
             verify(tagService, never()).detachAll(anyLong());
             verify(postMapper, never()).softDelete(anyLong());
+        }
+
+        // ---------- M3 Task 7：失效清单 ----------
+
+        @Test
+        @DisplayName("★ 改帖之后要删缓存——否则详情页会一直显示旧标题，而且不会报错")
+        void shouldEvictAfterUpdate() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "旧标题"));
+
+            postService.update(1L, "新标题", null, null);
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("只改标签也要删缓存——标签就在缓存对象里，改完不删会一直显示旧标签")
+        void shouldEvictWhenOnlyTagsChange() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
+
+            postService.update(1L, null, null, List.of("Redis"));
+
+            verify(postDetailCache).evictAfterCommit(1L);
+        }
+
+        @Test
+        @DisplayName("改帖失败（帖子不存在）时不删缓存——什么都没改，删了只是白让下一次读回源")
+        void shouldNotEvictWhenUpdateFails() {
+            when(postMapper.selectById(999L)).thenReturn(null);
+
+            assertThatThrownBy(() -> postService.update(999L, "新标题", null, null))
+                    .isInstanceOf(BizException.class);
+
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
+        }
+
+        @Test
+        @DisplayName("★ 删帖之后要删缓存——deleted 变了，可见性就变了")
+        void shouldEvictAfterDelete() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "标题"));
+
+            postService.delete(1L);
+
+            verify(postDetailCache).evictAfterCommit(1L);
         }
     }
 }

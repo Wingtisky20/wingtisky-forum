@@ -112,13 +112,21 @@ public interface PostMapper {
     int softDelete(Long id);
 
     /**
-     * 浏览数 +1。
+     * 只取浏览数这一列。
      *
-     * <p>用单条 {@code UPDATE ... SET view_count = view_count + 1} 而不是
-     * "查出来、加一、写回去"——后者在并发下会丢更新（两个请求都读到 10，都写回 11）。
+     * <p><b>它只在"Redis 里的计数器不存在"时才被调到</b>（Redis 重启、键过期、
+     * 或这篇帖子第一次被人看）。那时需要从库里拿一个基准值去给它播种。
+     * 正常情况下每次读详情**不会**查它——这正是把浏览数搬去 Redis 的收益所在。
      *
-     * <p><b>M3 会把这个方法换掉</b>：改成 Redis 累加、定时回写，
-     * 因为"每次读详情都写一次库"在流量上来之后会成为瓶颈（设计稿 §2.1）。
+     * @return {@code null} 表示这条帖子不存在或已删除
      */
-    int incrementViewCount(Long id);
+    Integer selectViewCount(Long id);
+
+    /**
+     * 把浏览数**写成指定值**（不是 +1）。定时回写用。
+     *
+     * <p>写绝对值而不是增量，是为了让回写**幂等**：同一次回写重复执行，结果一样。
+     * 增量的话，"写进去了但没来得及标记完成"会导致重试时又加一遍。
+     */
+    int updateViewCount(@Param("id") Long id, @Param("viewCount") int viewCount);
 }

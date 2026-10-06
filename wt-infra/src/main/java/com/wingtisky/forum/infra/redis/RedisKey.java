@@ -65,6 +65,52 @@ public final class RedisKey {
         return PREFIX + "rate:" + dimension + ":" + value + ":" + normalize(method + ":" + path);
     }
 
+    /**
+     * 帖子详情的缓存键（M3 的亮点 1）。
+     *
+     * <p><b>为什么帖子的键写在这个类里，而不是写在 forum-content 自己的常量里</b>：
+     * 这个类的职责就是"**Key 规范**"（见本类开头）——把全部 Key 收在一处，
+     * 才能一眼看全"这套系统在 Redis 里到底用了哪些键"，也才能保证命名一致。
+     * 散到各业务模块的话，同一个 Redis 上会慢慢长出几种互不相同的命名风格，
+     * 而 M9 三个服务共用同一个 Redis 时，这件事会变成真的麻烦。
+     *
+     * <p><b>它只回答"键长什么样"，不回答"存多久"</b>——后者是
+     * {@code wt.cache.*} 那组配置，属业务语义，留在 forum-content。
+     */
+    public static String cachePostDetail(Long postId) {
+        return PREFIX + "cache:post:detail:" + postId;
+    }
+
+    /**
+     * 回源锁的键：**由缓存键推导出来**，而不是另起一套命名。
+     *
+     * <p>推导而不是手写，是为了让"缓存键 ↔ 锁键"永远一一对应。
+     * 手写两套的话，加缓存时忘了加锁、或者两处拼得不一样，都不会报错——
+     * 只会表现为"锁没起作用"，而那正是最难发现的一类失效（表面一切正常，只是防击穿失效了）。
+     *
+     * <p>例：{@code wt:cache:post:detail:7} → {@code wt:lock:cache:post:detail:7}
+     */
+    public static String postViewCount(Long postId) {
+        return PREFIX + "cache:post:view:" + postId;
+    }
+
+    /**
+     * "哪些帖子的浏览数还没回写进库"的集合。
+     *
+     * <p>回写是定时任务做的，它得知道**该回写哪几条**。不用全表扫（那会随帖子数线性变慢），
+     * 而是每次浏览时把这个 id 记进集合，回写完再移除。
+     *
+     * <p>它是一个 SET 而不是 LIST：同一篇帖子被看一百次，集合里也只有一条。
+     */
+    public static String postViewDirtySet() {
+        return PREFIX + "cache:post:view:dirty";
+    }
+
+    public static String cacheLock(String cacheKey) {
+        String bare = cacheKey.startsWith(PREFIX) ? cacheKey.substring(PREFIX.length()) : cacheKey;
+        return PREFIX + "lock:" + bare;
+    }
+
     private static String normalize(String suffix) {
         return suffix.replace('/', '_');
     }

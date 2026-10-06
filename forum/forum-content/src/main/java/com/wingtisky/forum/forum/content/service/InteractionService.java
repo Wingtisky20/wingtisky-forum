@@ -2,6 +2,7 @@ package com.wingtisky.forum.forum.content.service;
 
 import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
+import com.wingtisky.forum.forum.content.cache.PostDetailCache;
 import com.wingtisky.forum.forum.content.mapper.PostCollectMapper;
 import com.wingtisky.forum.forum.content.mapper.PostLikeMapper;
 import com.wingtisky.forum.forum.content.mapper.PostMapper;
@@ -38,30 +39,40 @@ public class InteractionService {
     private final PostMapper postMapper;
     private final PostLikeMapper postLikeMapper;
     private final PostCollectMapper postCollectMapper;
+    private final PostDetailCache postDetailCache;
 
     public InteractionService(PostMapper postMapper,
                               PostLikeMapper postLikeMapper,
-                              PostCollectMapper postCollectMapper) {
+                              PostCollectMapper postCollectMapper,
+                              PostDetailCache postDetailCache) {
         this.postMapper = postMapper;
         this.postLikeMapper = postLikeMapper;
         this.postCollectMapper = postCollectMapper;
+        this.postDetailCache = postDetailCache;
     }
 
-    /** 点赞。已经点过就当无事发生（返回成功，计数不再加）。 */
+    /**
+     * 点赞。已经点过就当无事发生（返回成功，计数不再加）。
+     *
+     * <p><b>删缓存与动计数在同一个分支里</b>（M3 Task 7）：计数没动，缓存里那份就还是对的，
+     * 删了反而让下一次读白回源一次。顺带拿到了一个好处——**连点 3 次赞只删 1 次缓存**。
+     */
     @Transactional
     public void like(Long postId, Long userId) {
         requirePostExists(postId);
         if (postLikeMapper.insertIgnore(userId, postId) > 0) {
             postMapper.addLikeCount(postId, 1);
+            postDetailCache.evictAfterCommit(postId);
         }
     }
 
-    /** 取消点赞。本来就没点过也算成功（幂等），但**不能去减计数**。 */
+    /** 取消点赞。本来就没点过也算成功（幂等），但**不能去减计数**，也就没有缓存要删。 */
     @Transactional
     public void unlike(Long postId, Long userId) {
         requirePostExists(postId);
         if (postLikeMapper.delete(userId, postId) > 0) {
             postMapper.addLikeCount(postId, -1);
+            postDetailCache.evictAfterCommit(postId);
         }
     }
 
@@ -71,6 +82,7 @@ public class InteractionService {
         requirePostExists(postId);
         if (postCollectMapper.insertIgnore(userId, postId) > 0) {
             postMapper.addCollectCount(postId, 1);
+            postDetailCache.evictAfterCommit(postId);
         }
     }
 
@@ -80,6 +92,7 @@ public class InteractionService {
         requirePostExists(postId);
         if (postCollectMapper.delete(userId, postId) > 0) {
             postMapper.addCollectCount(postId, -1);
+            postDetailCache.evictAfterCommit(postId);
         }
     }
 

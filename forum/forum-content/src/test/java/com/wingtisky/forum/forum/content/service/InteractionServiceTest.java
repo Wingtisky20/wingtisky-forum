@@ -2,6 +2,7 @@ package com.wingtisky.forum.forum.content.service;
 
 import com.wingtisky.forum.common.exception.BizException;
 import com.wingtisky.forum.common.result.ErrorCode;
+import com.wingtisky.forum.forum.content.cache.PostDetailCache;
 import com.wingtisky.forum.forum.content.entity.Post;
 import com.wingtisky.forum.forum.content.mapper.PostCollectMapper;
 import com.wingtisky.forum.forum.content.mapper.PostLikeMapper;
@@ -47,11 +48,16 @@ class InteractionServiceTest {
     @Mock
     private PostCollectMapper postCollectMapper;
 
+    /** 帖子的详情缓存。点赞会改 `likeCount`，而它就在缓存对象里。 */
+    @Mock
+    private PostDetailCache postDetailCache;
+
     private InteractionService interactionService;
 
     @BeforeEach
     void setUp() {
-        interactionService = new InteractionService(postMapper, postLikeMapper, postCollectMapper);
+        interactionService = new InteractionService(postMapper, postLikeMapper, postCollectMapper,
+                postDetailCache);
     }
 
     private static Post existingPost() {
@@ -77,10 +83,12 @@ class InteractionServiceTest {
             interactionService.like(POST_ID, ME);
 
             verify(postMapper).addLikeCount(POST_ID, 1);
+            // M3 Task 7：点赞改了 likeCount，而它在缓存对象里 → 这一条帖子必须失效
+            verify(postDetailCache).evictAfterCommit(POST_ID);
         }
 
         @Test
-        @DisplayName("★ 重复点赞：插入被忽略，**计数一点都不动**")
+        @DisplayName("★ 重复点赞：插入被忽略，**计数一点都不动**，缓存也不删")
         void repeatedLikeDoesNotBumpCount() {
             when(postMapper.selectById(POST_ID)).thenReturn(existingPost());
             // INSERT IGNORE 撞主键 → 返回 0
@@ -91,6 +99,10 @@ class InteractionServiceTest {
             // 这一条是整个 Task 里最要紧的断言：没有它，同一个人点十次赞，
             // 帖子的点赞数就是十，而且看起来完全正常
             verify(postMapper, never()).addLikeCount(anyLong(), anyInt());
+            // 什么都没改，就不该删缓存——连点 3 次赞只删 1 次。
+            // 删了也不出错，只是让下一次读白回源一次；钉住它是为了让"哪些写要失效"
+            // 这条规则始终是**由"是否真的改了"决定的**，而不是"调了这个方法就删"
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
         }
 
         @Test
@@ -120,10 +132,11 @@ class InteractionServiceTest {
             interactionService.unlike(POST_ID, ME);
 
             verify(postMapper).addLikeCount(POST_ID, -1);
+            verify(postDetailCache).evictAfterCommit(POST_ID);
         }
 
         @Test
-        @DisplayName("★ 本来就没点过 → 删 0 行，**计数一点都不动**（否则会减掉别人的赞）")
+        @DisplayName("★ 本来就没点过 → 删 0 行，**计数一点都不动**（否则会减掉别人的赞），缓存也不删")
         void unlikeWhenNeverLikedDoesNotBumpCount() {
             when(postMapper.selectById(POST_ID)).thenReturn(existingPost());
             when(postLikeMapper.delete(ME, POST_ID)).thenReturn(0);
@@ -131,6 +144,7 @@ class InteractionServiceTest {
             interactionService.unlike(POST_ID, ME);
 
             verify(postMapper, never()).addLikeCount(anyLong(), anyInt());
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
         }
     }
 
@@ -147,10 +161,11 @@ class InteractionServiceTest {
             interactionService.collect(POST_ID, ME);
 
             verify(postMapper).addCollectCount(POST_ID, 1);
+            verify(postDetailCache).evictAfterCommit(POST_ID);
         }
 
         @Test
-        @DisplayName("重复收藏：计数不动")
+        @DisplayName("重复收藏：计数不动，缓存也不删")
         void repeatedCollectDoesNotBumpCount() {
             when(postMapper.selectById(POST_ID)).thenReturn(existingPost());
             when(postCollectMapper.insertIgnore(ME, POST_ID)).thenReturn(0);
@@ -158,10 +173,11 @@ class InteractionServiceTest {
             interactionService.collect(POST_ID, ME);
 
             verify(postMapper, never()).addCollectCount(anyLong(), anyInt());
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
         }
 
         @Test
-        @DisplayName("取消收藏：删掉一行才减计数")
+        @DisplayName("取消收藏：删掉一行才减计数，并删缓存")
         void uncollectBumpsCount() {
             when(postMapper.selectById(POST_ID)).thenReturn(existingPost());
             when(postCollectMapper.delete(ME, POST_ID)).thenReturn(1);
@@ -169,10 +185,11 @@ class InteractionServiceTest {
             interactionService.uncollect(POST_ID, ME);
 
             verify(postMapper).addCollectCount(POST_ID, -1);
+            verify(postDetailCache).evictAfterCommit(POST_ID);
         }
 
         @Test
-        @DisplayName("没收藏过就取消：计数不动")
+        @DisplayName("没收藏过就取消：计数不动，缓存也不删")
         void uncollectWhenNeverCollectedDoesNotBumpCount() {
             when(postMapper.selectById(POST_ID)).thenReturn(existingPost());
             when(postCollectMapper.delete(ME, POST_ID)).thenReturn(0);
@@ -180,6 +197,7 @@ class InteractionServiceTest {
             interactionService.uncollect(POST_ID, ME);
 
             verify(postMapper, never()).addCollectCount(anyLong(), anyInt());
+            verify(postDetailCache, never()).evictAfterCommit(anyLong());
         }
     }
 
