@@ -1,7 +1,11 @@
 package com.wingtisky.forum.common.security;
 
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * "现在这个请求是谁发的"。
@@ -44,5 +48,37 @@ public final class CurrentUser {
         }
         Object principal = authentication.getPrincipal();
         return (principal instanceof Long userId) ? userId : null;
+    }
+
+    /**
+     * 当前登录用户是否拥有其中**任一**角色。未登录返回 {@code false}。
+     *
+     * <p>角色名传**不带前缀**的写法（{@code "MODERATOR"}），内部会补上 Spring Security
+     * 约定的 {@code ROLE_} 前缀——让调用方不必记住那个前缀，也避免有人写
+     * {@code hasAnyRole("ROLE_ADMIN")} 而它永远为假。
+     *
+     * <p>角色是从 JWT 载荷里来的（{@link #id()} 的注释里有说明），
+     * 所以这个方法<strong>不查库</strong>。代价是改了角色要等令牌过期才生效——
+     * 这在 ADR-0013 里是明确接受的。
+     *
+     * <p><b>它与 {@code @PreAuthorize("hasRole(...)")} 的分工</b>：
+     * 后者用于"这个接口只有某角色能调"；前者用于"同一条数据，不同角色看到的内容不同"
+     * （比如下架的帖子，作者和版主能看、别人不能）。
+     */
+    public static boolean hasAnyRole(String... roles) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
+        }
+        Set<String> owned = authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .collect(Collectors.toSet());
+
+        for (String role : roles) {
+            if (owned.contains("ROLE_" + role)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
