@@ -80,6 +80,12 @@ class PostServiceTest {
         p.setAuthorId(authorId);
         p.setTitle(title);
         p.setSummary("摘要");
+        // ⚠️ 必须填 status 与 deleted：真实的行里它们是 NOT NULL DEFAULT 0，
+        // 而 Post.isVisible() 用的是"status 非 null 且为 0"——
+        // 造数时漏掉这两项，会让一条本该可见的帖子变成"不可见"，
+        // 表现是一堆本该通过的详情测试报"帖子不存在"。（已踩过一次。）
+        p.setStatus(Post.STATUS_PUBLISHED);
+        p.setDeleted(0);
         p.setTopFlag(0);
         p.setFeaturedFlag(0);
         p.setViewCount(0);
@@ -261,7 +267,7 @@ class PostServiceTest {
             when(userQueryService.findBrief(10L))
                     .thenReturn(Optional.of(new UserBrief(10L, "甲", null)));
 
-            PostDetail detail = postService.getDetail(1L, 7L);
+            PostDetail detail = postService.getDetail(1L, 7L, false);
 
             verify(postMapper).incrementViewCount(1L);
             assertThat(detail.viewCount()).as("响应里的数字要和数据库里的一致").isEqualTo(8);
@@ -279,7 +285,7 @@ class PostServiceTest {
             when(interactionService.liked(1L, 7L)).thenReturn(true);
             when(interactionService.collected(1L, 7L)).thenReturn(false);
 
-            PostDetail detail = postService.getDetail(1L, 7L);
+            PostDetail detail = postService.getDetail(1L, 7L, false);
 
             assertThat(detail.liked()).isTrue();
             assertThat(detail.collected()).isFalse();
@@ -293,7 +299,7 @@ class PostServiceTest {
             when(postMapper.selectById(1L)).thenReturn(p);
             when(userQueryService.findBrief(10L)).thenReturn(Optional.empty());
 
-            PostDetail detail = postService.getDetail(1L, null);
+            PostDetail detail = postService.getDetail(1L, null, false);
 
             assertThat(detail.liked()).isFalse();
             assertThat(detail.collected()).isFalse();
@@ -308,12 +314,150 @@ class PostServiceTest {
         void shouldThrowWhenPostMissing() {
             when(postMapper.selectById(999L)).thenReturn(null);
 
-            assertThatThrownBy(() -> postService.getDetail(999L, null))
+            assertThatThrownBy(() -> postService.getDetail(999L, null, false))
                     .isInstanceOf(BizException.class)
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
 
             verify(postMapper, never()).incrementViewCount(anyLong());
+        }
+    }
+
+    @Nested
+    @DisplayName("后台治理与可见性")
+    class AdminAndVisibility {
+
+        /** 造一条已下架的帖子（status = 1）。 */
+        private Post offlinePost(long id, long authorId) {
+            Post p = post(id, authorId, "被下架的帖子");
+            p.setStatus(Post.STATUS_OFFLINE);
+            return p;
+        }
+
+        @Test
+        @DisplayName("三个字段都不给 → A0101，不静默返回成功")
+        void rejectsEmptyAdminUpdate() {
+            assertThatThrownBy(() -> postService.administrate(1L, 7L, null, null, null))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
+                            .isEqualTo(ErrorCode.PARAM_INVALID));
+
+            verifyNoInteractions(postMapper);
+        }
+
+        @Test
+        @DisplayName("★ 下架：状态真的变了，标签的帖子数要减 1")
+        void takingOfflineDecrementsTagCount() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "正常帖子"));
+
+            postService.administrate(1L, 99L, null, null, Post.STATUS_OFFLINE);
+
+            verify(postMapper).updateAttributes(1L, null, null, Post.STATUS_OFFLINE);
+            // 不减的话，标签页写着"12 篇"、点进去只有 9 篇
+            verify(tagService).adjustPostCountForTagsOf(1L, -1);
+        }
+
+        @Test
+        @DisplayName("★ 重复下架：状态没变，**不能把标签计数减第二遍**")
+        void repeatedOfflineDoesNotDecrementTwice() {
+            when(postMapper.selectById(1L)).thenReturn(offlinePost(1L, 10L));
+
+            postService.administrate(1L, 99L, null, null, Post.STATUS_OFFLINE);
+
+            verify(postMapper).updateAttributes(1L, null, null, Post.STATUS_OFFLINE);
+            verify(tagService, never()).adjustPostCountForTagsOf(anyLong(), anyInt());
+        }
+
+        @Test
+        @DisplayName("恢复上架：标签计数加回来")
+        void restoringIncrementsTagCount() {
+            when(postMapper.selectById(1L)).thenReturn(offlinePost(1L, 10L));
+
+            postService.administrate(1L, 99L, null, null, Post.STATUS_PUBLISHED);
+
+            verify(tagService).adjustPostCountForTagsOf(1L, 1);
+        }
+
+        @Test
+        @DisplayName("只改置顶 / 加精时，标签计数不受影响")
+        void toppingDoesNotTouchTagCount() {
+            when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, "正常帖子"));
+
+            postService.administrate(1L, 99L, true, true, null);
+
+            verify(postMapper).updateAttributes(1L, true, true, null);
+            verify(tagService, never()).adjustPostCountForTagsOf(anyLong(), anyInt());
+        }
+
+        @Test
+        @DisplayName("治理一条不存在的帖子 → A0201")
+        void adminOnMissingPost() {
+            when(postMapper.selectById(999L)).thenReturn(null);
+
+            assertThatThrownBy(() -> postService.administrate(999L, 99L, true, null, null))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
+                            .isEqualTo(ErrorCode.POST_NOT_FOUND));
+        }
+
+        @Test
+        @DisplayName("正常的帖子谁都能看")
+        void publishedPostIsVisibleToEveryone() {
+            Post p = post(1L, 10L, "正常帖子");
+            p.setStatus(Post.STATUS_PUBLISHED);
+            p.setContent("正文");
+            when(postMapper.selectById(1L)).thenReturn(p);
+            when(userQueryService.findBrief(anyLong())).thenReturn(Optional.empty());
+
+            assertThat(postService.getDetail(1L, null, false).title()).isEqualTo("正常帖子");
+            assertThat(postService.getDetail(1L, 999L, false).title()).isEqualTo("正常帖子");
+        }
+
+        @Test
+        @DisplayName("★ 被下架的帖子：匿名访问当作不存在（404）")
+        void offlinePostIsHiddenFromAnonymous() {
+            when(postMapper.selectById(1L)).thenReturn(offlinePost(1L, 10L));
+
+            assertThatThrownBy(() -> postService.getDetail(1L, null, false))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
+                            .isEqualTo(ErrorCode.POST_NOT_FOUND));
+
+            // 当作不存在，而不是 403——403 等于告诉对方"这个 id 是存在的"
+            verify(postMapper, never()).incrementViewCount(anyLong());
+        }
+
+        @Test
+        @DisplayName("★ 被下架的帖子：别人也看不到")
+        void offlinePostIsHiddenFromOthers() {
+            when(postMapper.selectById(1L)).thenReturn(offlinePost(1L, 10L));
+
+            assertThatThrownBy(() -> postService.getDetail(1L, 999L, false))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
+                            .isEqualTo(ErrorCode.POST_NOT_FOUND));
+        }
+
+        @Test
+        @DisplayName("★ 被下架的帖子：**作者本人仍然看得到**（否则他不知道帖子去哪了）")
+        void offlinePostIsVisibleToItsAuthor() {
+            Post p = offlinePost(1L, 10L);
+            p.setContent("正文");
+            when(postMapper.selectById(1L)).thenReturn(p);
+            when(userQueryService.findBrief(10L)).thenReturn(Optional.empty());
+
+            assertThat(postService.getDetail(1L, 10L, false).title()).isEqualTo("被下架的帖子");
+        }
+
+        @Test
+        @DisplayName("★ 被下架的帖子：版主也看得到（他要能复核自己的治理动作）")
+        void offlinePostIsVisibleToModerator() {
+            Post p = offlinePost(1L, 10L);
+            p.setContent("正文");
+            when(postMapper.selectById(1L)).thenReturn(p);
+            when(userQueryService.findBrief(10L)).thenReturn(Optional.empty());
+
+            assertThat(postService.getDetail(1L, 999L, true).title()).isEqualTo("被下架的帖子");
         }
     }
 
