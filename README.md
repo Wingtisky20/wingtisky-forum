@@ -175,7 +175,21 @@ npm --prefix frontend run dev
 > **前端不需要单独配后端地址**：Vite 的 dev server 把 `/api` 代理到 8080，
 > 在浏览器看来前后端是同源的（见 `frontend/vite.config.js` 里的说明）。
 
-### 6. 验证真的跑通了
+### 6. 造一个演示账号（可选）
+
+登录页上写着「演示账号 `demo` / `demo12345`」——**但那个账号是"报名报出来的"，
+只存在于建它的那个数据库里**。在你的环境里想让它也能用：
+
+```
+bash scripts/seed-demo.sh
+```
+
+它走的是注册接口（不是直接写库），所以密码由后端的 BCrypt 生成，
+仓库里不会留一个写死的哈希。重复跑不会报错。
+
+不跑也行——直接在注册页自己注册一个就是。
+
+### 7. 验证真的跑通了
 
 按 [`docs/06-runbook/api-smoke.http`](docs/06-runbook/api-smoke.http) 从第 1 条往下跑
 （IDEA 直接点箭头，VS Code 装 REST Client 插件也行）。
