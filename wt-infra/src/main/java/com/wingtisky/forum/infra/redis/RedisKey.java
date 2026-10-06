@@ -65,6 +65,22 @@ public final class RedisKey {
         return PREFIX + "rate:" + dimension + ":" + value + ":" + normalize(method + ":" + path);
     }
 
+    /**
+     * 帖子详情的缓存键（M3 的亮点 1）。
+     *
+     * <p><b>为什么帖子的键写在这个类里，而不是写在 forum-content 自己的常量里</b>：
+     * 这个类的职责就是"**Key 规范**"（见本类开头）——把全部 Key 收在一处，
+     * 才能一眼看全"这套系统在 Redis 里到底用了哪些键"，也才能保证命名一致。
+     * 散到各业务模块的话，同一个 Redis 上会慢慢长出几种互不相同的命名风格，
+     * 而 M9 三个服务共用同一个 Redis 时，这件事会变成真的麻烦。
+     *
+     * <p><b>它只回答"键长什么样"，不回答"存多久"</b>——后者是
+     * {@code wt.cache.*} 那组配置，属业务语义，留在 forum-content。
+     */
+    public static String cachePostDetail(Long postId) {
+        return PREFIX + "cache:post:detail:" + postId;
+    }
+
     private static String normalize(String suffix) {
         return suffix.replace('/', '_');
     }
