@@ -245,6 +245,81 @@ class TwoLevelCacheTest {
         assertThat(l2.get(KEY)).isNotEqualTo("这不是合法的 JSON");
     }
 
+    @Test
+    @DisplayName("【反面·防穿透】把墓碑删掉（等于根本没写墓碑）：读几次就回源几次")
+    void withoutTombstoneEveryReadLoads() {
+        AtomicInteger loads = new AtomicInteger();
+        Supplier<Sample> missing = () -> {
+            loads.incrementAndGet();
+            return null;
+        };
+
+        // 正面：第一次回源写了墓碑，之后连读 4 次都不再回源
+        for (int i = 0; i < 5; i++) {
+            cache.get(KEY, Sample.class, POLICY, missing);
+        }
+        assertThat(loads)
+                .as("正面：墓碑挡着，5 次读只回源 1 次")
+                .hasValue(1);
+
+        // 反面：每次读之前把墓碑抹掉——这就等价于"这个缓存不写墓碑"，
+        // 其余一切不变（同一个 key、同一个 loader、同一个策略）
+        for (int i = 0; i < 4; i++) {
+            l2.remove(KEY);
+            localCache.invalidate(KEY);
+            cache.get(KEY, Sample.class, POLICY, missing);
+        }
+
+        assertThat(loads)
+                .as("反面：没有墓碑，每一次未命中的读都会压到数据库上——"
+                        + "查一个不存在的 id 就成了一个可以无限打的攻击面")
+                .hasValue(5);
+    }
+
+    // ---------- 命中计数（Task 10 的闸门实验要用） ----------
+
+    @Test
+    @DisplayName("L2 命中会打点，且**L1 命中不再重复记一笔**")
+    void countsL2HitsWithoutDoubleCountingL1() {
+        // 只往 L2 里放：模拟"另一个节点写进去的"，或本进程刚重启
+        l2.put(KEY, "{\"id\":1,\"title\":\"来自L2\",\"tags\":[],\"createTime\":null}");
+
+        cache.get(KEY, Sample.class, POLICY, this::failIfCalled);
+
+        assertThat(cache.l2HitCount()).isEqualTo(1);
+        assertThat(cache.loadCount()).as("由 L2 供给，没有回源").isZero();
+
+        // 再取一次：这回值和 L1 都在，是 L1 命中
+        cache.get(KEY, Sample.class, POLICY, this::failIfCalled);
+
+        assertThat(cache.l2HitCount())
+                .as("L1 命中不能再记一笔 L2 命中——否则算出来的 L2 命中率是虚高的，"
+                        + "而那正是闸门实验表格里的一栏")
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("墓碑也算 L2 命中——它同样挡住了一次回源")
+    void tombstoneCountsAsL2Hit() {
+        l2.put(KEY, TwoLevelCache.NULL_SENTINEL);
+
+        assertThat(cache.get(KEY, Sample.class, POLICY, this::failIfCalled)).isNull();
+
+        assertThat(cache.l2HitCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("打点可以清零——实验要先清零再打流量，否则读数里混着之前跑的")
+    void canResetHitCounters() {
+        cache.get(KEY, Sample.class, POLICY, () -> sample("v"));
+
+        cache.resetLoadCount();
+        cache.resetL2HitCount();
+
+        assertThat(cache.loadCount()).isZero();
+        assertThat(cache.l2HitCount()).isZero();
+    }
+
     // ---------- 事务提交后才失效（Task 7） ----------
 
     @Test
