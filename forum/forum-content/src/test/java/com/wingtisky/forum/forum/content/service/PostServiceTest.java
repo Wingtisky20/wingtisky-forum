@@ -5,6 +5,7 @@ import com.wingtisky.forum.common.result.ErrorCode;
 import com.wingtisky.forum.domain.user.UserBrief;
 import com.wingtisky.forum.domain.user.UserQueryService;
 import com.wingtisky.forum.forum.content.dto.PageResult;
+import com.wingtisky.forum.forum.content.cache.PostViewCounter;
 import com.wingtisky.forum.forum.content.dto.PostDetail;
 import com.wingtisky.forum.forum.content.dto.PostListItem;
 import com.wingtisky.forum.forum.content.dto.PostQuery;
@@ -67,11 +68,16 @@ class PostServiceTest {
     @Mock
     private InteractionService interactionService;
 
+    /** 浏览数的计数器（M3 起它接手了"读接口里带写"那件事）。 */
+    @Mock
+    private PostViewCounter postViewCounter;
+
     private PostService postService;
 
     @BeforeEach
     void setUp() {
-        postService = new PostService(postMapper, userQueryService, tagService, interactionService);
+        postService = new PostService(postMapper, userQueryService, tagService, interactionService,
+                postViewCounter);
     }
 
     private static Post post(long id, long authorId, String title) {
@@ -258,19 +264,26 @@ class PostServiceTest {
     class Detail {
 
         @Test
-        @DisplayName("给浏览数 +1，且返回的数字把本次访问算上")
-        void shouldIncrementViewCount() {
+        @DisplayName("浏览数走 Redis 计数器；响应里的数字就是计数器返回的新值")
+        void shouldCountViewThroughRedisCounter() {
             Post p = post(1L, 10L, "标题");
             p.setContent("正文");
             p.setViewCount(7);
             when(postMapper.selectById(1L)).thenReturn(p);
             when(userQueryService.findBrief(10L))
                     .thenReturn(Optional.of(new UserBrief(10L, "甲", null)));
+            // 计数器返回的就是"含本次访问"的新值。M2 时这一步靠手工 +1，
+            // 所以那时才要在注释里解释"响应里的数字和库里差 1"——现在不需要了。
+            when(postViewCounter.increment(eq(1L), any())).thenReturn(8L);
 
             PostDetail detail = postService.getDetail(1L, 7L, false);
 
-            verify(postMapper).incrementViewCount(1L);
-            assertThat(detail.viewCount()).as("响应里的数字要和数据库里的一致").isEqualTo(8);
+            verify(postViewCounter).increment(eq(1L), any());
+            // **这条才是重点**：读详情不该再写库。
+            // 把浏览数搬去 Redis 的收益就是这一条，而它只有靠"断言没发生写"才守得住
+            // ——"响应里的数字对了"证明不了没写库。
+            verify(postMapper, never()).updateViewCount(anyLong(), anyInt());
+            assertThat(detail.viewCount()).isEqualTo(8);
             assertThat(detail.content()).isEqualTo("正文");
             assertThat(detail.author().nickname()).isEqualTo("甲");
         }
@@ -319,7 +332,7 @@ class PostServiceTest {
                     .satisfies(e -> assertThat(errorCodeOf(e).getErrorCode())
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
 
-            verify(postMapper, never()).incrementViewCount(anyLong());
+            verify(postViewCounter, never()).increment(anyLong(), any());
         }
     }
 
@@ -424,7 +437,7 @@ class PostServiceTest {
                             .isEqualTo(ErrorCode.POST_NOT_FOUND));
 
             // 当作不存在，而不是 403——403 等于告诉对方"这个 id 是存在的"
-            verify(postMapper, never()).incrementViewCount(anyLong());
+            verify(postViewCounter, never()).increment(anyLong(), any());
         }
 
         @Test
