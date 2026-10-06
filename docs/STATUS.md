@@ -216,7 +216,7 @@ Spring Boot **3.5.16** · Redisson **3.52.0** · Caffeine **3.2.4** · ArchUnit 
 
 **仓库地址**：https://github.com/Wingtisky20/wingtisky-forum（Public）
 - `main` = 主线，永远可运行。M0 经 PR #1、M1 经 PR #3、**M2 经 PR #5** 合并
-- **当前状态**：主线到 M2（tag `m2-done`）；**M3 进行中**，工作分支 `feature/m3-cache`（**尚未开 PR**）
+- **当前状态**：`main` 到 M2（tag `m2-done`）。**M3 的全部代码在 `feature/m3-cache` 上，已开 PR [#12](https://github.com/Wingtisky20/wingtisky-forum/pull/12)（未合并）**；tag `m3-done` 按协议待合并后打
 
 > **2026-10-05 更正**：上面两行原写着「`main` = 设计文档基线（`ad87503`）」
 > 与「`feature/m0-bootstrap` = M0 工作分支（**当前分支**）」——那是 M0 期间的状态，之后没再更新。
@@ -317,9 +317,13 @@ app/                                        单进程启动模块（唯一 main�
 >
 > 反面对照是这条闸门的证据核心——只报"数字是 1"说明不了是锁起的作用。
 >
-> **下一步 = 「Task 11 · 收尾」**：README 补亮点章节与浏览数的最终一致说明、
-> 文档回填、**链路讲解**（`docs/05-interview/` 新增「帖子详情多级缓存链路」，
-> 派子 agent 写、只回一行回执）、打 tag `m3-done`（在 PR 合并后）。
+> **M3 的 11 个 Task 已全部完成。下一步是「合并与打 tag」**：
+> 看一眼 [PR #12](https://github.com/Wingtisky20/wingtisky-forum/pull/12) 的描述与 diff，
+> 然后合进 `main`（Merge commit `--no-ff`，不是 Squash——理由见 ADR-0008），
+> 合并后打注解 tag `m3-done` 并发 Release，最后删掉 `feature/m3-cache`。
+>
+> ⚠️ **合并前读一眼 PR 里那张表**：它的结论不是"缓存什么都好"——
+> 主要收益是数据库负载而不是延迟，P99 反而更慢（原因可解释）。**别只记住"降 100 倍"。**
 >
 > ✅ **已关闭的缺口**：Task 8 收尾时实测复现的「下架后 45 秒内匿名仍看得到」
 > 已在 Task 7 关掉——现在下架会删缓存，同一场景实测变回 **404**。
