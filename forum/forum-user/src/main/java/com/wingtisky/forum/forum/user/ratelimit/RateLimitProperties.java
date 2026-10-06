@@ -1,6 +1,7 @@
 package com.wingtisky.forum.forum.user.ratelimit;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.http.HttpMethod;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -31,6 +32,19 @@ public class RateLimitProperties {
      */
     private List<Rule> rules = new ArrayList<>();
 
+    /**
+     * 登录接口的**用户名维度**限流（{@code wt.rate-limit.login-username}）。
+     *
+     * <p><b>它为什么不放在 {@code rules} 里</b>：那些规则是按"路径 + 方法"匹配的，
+     * 在拦截器里执行；而拦截器**拿不到请求体里的用户名**（请求体是一次性的，
+     * 读掉之后 {@code @RequestBody} 就拿不到了）。
+     * 所以这一维度由 {@code AuthService.login} 自己读——那里用户名已经是参数。
+     *
+     * <p>阈值比 IP 维度更严：它挡的是"很多台机器试同一个账号"，
+     * 而正常用户一分钟内不会连试 5 次密码。
+     */
+    private LoginUsernameLimit loginUsername = new LoginUsernameLimit();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -45,6 +59,43 @@ public class RateLimitProperties {
 
     public void setRules(List<Rule> rules) {
         this.rules = rules;
+    }
+
+    public LoginUsernameLimit getLoginUsername() {
+        return loginUsername;
+    }
+
+    public void setLoginUsername(LoginUsernameLimit loginUsername) {
+        this.loginUsername = loginUsername;
+    }
+
+    /**
+     * 用户名维度的阈值。
+     *
+     * <p>**没有降级策略字段**：这一维度 Redis 挂掉时一律退回本地内存。
+     * 三种降级策略里，"放行"等于把门打开、"拒绝"等于谁都登不进来，
+     * 都不合适——而它的唯一目的就是防撞库（见 {@code AuthService} 里的说明）。
+     * 只留一条路，就不必在配置里写一个永远不会改成别的值的选项。
+     */
+    public static class LoginUsernameLimit {
+        private int limit = 5;
+        private Duration window = Duration.ofMinutes(1);
+
+        public int getLimit() {
+            return limit;
+        }
+
+        public void setLimit(int limit) {
+            this.limit = limit;
+        }
+
+        public Duration getWindow() {
+            return window;
+        }
+
+        public void setWindow(Duration window) {
+            this.window = window;
+        }
     }
 
     /** 限流维度：按什么区分"谁在请求"。 */
@@ -72,6 +123,19 @@ public class RateLimitProperties {
         /** Ant 风格路径模式，如 {@code /api/auth/login} 或 {@code /api/**}。 */
         private String path;
 
+        /**
+         * 这条规则适用的 HTTP 方法，如 {@code [POST, PUT, PATCH, DELETE]}。
+         *
+         * <p><b>空（或不填）表示不限方法</b>，但那种用法要小心：同一条路径上的
+         * 读与写通常需要**两套阈值**（读宽松、写严格）。不区分方法的话，
+         * 一条 {@code /api/posts} 的规则会同时管住公开的列表查询和发帖——
+         * 按发帖的严格阈值设，读就被误伤；按读的宽松阈值设，发帖又等于没限。
+         *
+         * <p>诚实的代价：这意味着**一条路径可能要写两条规则**（一条给读、一条给写）。
+         * 换来的是"阈值与操作重量挂钩"这件事在配置里看得见。
+         */
+        private List<HttpMethod> methods;
+
         private Dimension dimension = Dimension.IP;
 
         /** 窗口内允许的最大请求数。 */
@@ -87,6 +151,14 @@ public class RateLimitProperties {
 
         public void setPath(String path) {
             this.path = path;
+        }
+
+        public List<HttpMethod> getMethods() {
+            return methods;
+        }
+
+        public void setMethods(List<HttpMethod> methods) {
+            this.methods = methods;
         }
 
         public Dimension getDimension() {
