@@ -91,5 +91,40 @@
       <groupId>org.redisson</groupId>
       <artifactId>redisson-spring-boot-starter</artifactId>
     </dependency>
+
+    <!-- L1：进程内缓存。M3 的多级缓存第一级。
+         版本由父 POM 的 dependencyManagement 管（3.2.4），这里不写。
+
+         为什么是 Caffeine 而不是自己拿 ConcurrentHashMap 造一个：
+         "淘汰策略"和"过期"这两件事各有十几个坑（读写不阻塞、命中率统计、
+         按条目设不同的过期时间……），而 Caffeine 是被验证过的实现。
+         本项目对它的用法很浅：一个实例、按 key 存、按条目设 TTL。 -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
+
+    <!-- JSON 序列化：缓存值以 JSON 字符串存进 Redis（不是 JDK 序列化，
+         后者在 Redis 里是一坨二进制，排查时肉眼看不见内容）。
+
+         ⚠️ 这个依赖**本来就是传递进来的**（随 spring-boot-starter-data-redis 等），
+         这里显式写出来是**有意的**：
+           · 靠传递依赖拿到的类，上游一旦调整依赖，编译会突然坏在一个不相干的模块里；
+           · 而"缓存值怎么序列化"是本模块**主动承担**的职责（见 m3-cache.md §6.1），
+             主动承担的职责就该有自己的一行依赖。
+         版本同样由父 POM（Spring Boot BOM）管，这里不写。 -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+
+    <!-- 测试。M3 起 wt-infra 不再只是"几行工具"，有了要守住的机制
+         （两级查找的顺序、墓碑的短命、TTL 抖动是否真的生效）。
+         用 compile 之外的作用域：它不会进最终产物。 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>
