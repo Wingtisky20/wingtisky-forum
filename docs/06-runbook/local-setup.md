@@ -121,8 +121,32 @@ cd D:/aaaSoftware/redis
 **为什么停在 5.0.14.1**：这是 **Windows 原生构建的天花板**，更高版本没有官方
 Windows 版，而本机无 Docker/WSL2（ADR-0004）。这是环境锁死的约束，不是偏好。
 
-**连带风险**：Redisson 3.52.0 可能用到 Redis 6+ 才有的命令。**M3 首次接入时
-必须实测**，若报 `ERR unknown command` 则降级并修订 ADR-0001（该待办已记录）。
+**连带风险**：Redisson 3.52.0 可能用到 Redis 6+ 才有的命令。
+
+> **✅ 2026-10-06 实测：兼容。** 加锁 / 释放 / 看门狗参数在 5.0.14.1 上都正常，
+> 没有 `ERR unknown command`。**无需降级、无需修订 ADR-0001**，
+> 挂了一阵的待核实项就此关闭。守着它的测试是 `RedissonSmokeIntegrationTest`。
+
+---
+
+**⚠️ M3 起，Redis 是「必须起着」的（不再是"可选"）**
+
+在 M1/M2 时，Redis 只被认证与限流用到，所以本机不起 Redis 也能把应用跑起来
+（不碰那两个功能就行）。**M3 之后这条不再成立**：
+
+- 两极缓存（亮点 1）的 L2、以及回源用的分布式锁都在 Redis 上；
+- 更直接的：Redisson 的自动配置**在启动时就要连上**，连不上应用直接起不来：
+
+```
+Failed to instantiate [org.redisson.api.RedissonClient]:
+  RedisConnectionException: Unable to connect to Redis server: 127.0.0.1:6379
+```
+
+这是**有意接受的行为变更**（理由记在 `app/src/main/resources/application.yml`
+的 Redis 段注释里：M3 起没有 Redis 应用本来就干不了活，
+保住"能启动"要多一条锁降级路径，是新的失效面）。
+
+**所以：跑应用之前，先 `redis-cli PING` 确认它活着。**
 
 ---
 
