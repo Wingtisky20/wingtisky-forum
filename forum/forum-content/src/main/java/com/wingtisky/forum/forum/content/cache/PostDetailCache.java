@@ -71,10 +71,24 @@ public class PostDetailCache {
      *
      * <p><b>凡是能改变 {@link CachedPostDetail} 里任何一个字段的写操作，都必须调它</b>
      * ——编辑、删除、治理（置顶/加精/下架）、点赞、收藏、评论。
-     * 完整的一张表在设计稿 §3.3；Task 7 逐条接上。
+     * 完整的一张表在设计稿 §3.3。
+     *
+     * <p><b>写路径请用 {@link #evictAfterCommit}，不要用这个。</b> 本方法立刻删，
+     * 用在事务里等于把顺序做成"先删缓存、再更新库"（理由见
+     * {@code TwoLevelCache.evictAfterCommit}）。它留给"本来就不在事务里"的场景。
      */
     public void evict(Long postId) {
         cache.evict(RedisKey.cachePostDetail(postId));
+    }
+
+    /**
+     * 让某条帖子的缓存失效，**等当前事务提交之后**再动手。**写路径一律用它。**
+     *
+     * <p>为什么必须等提交、回滚时为什么不删、不在事务里时为什么立刻删——
+     * 三条理由都写在 {@code TwoLevelCache.evictAfterCommit} 上，这里不重复。
+     */
+    public void evictAfterCommit(Long postId) {
+        cache.evictAfterCommit(RedisKey.cachePostDetail(postId));
     }
 
     /** 当前策略（测试与观测用）。 */

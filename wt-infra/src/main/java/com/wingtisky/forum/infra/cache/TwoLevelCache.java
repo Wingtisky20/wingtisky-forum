@@ -11,6 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
@@ -161,6 +163,37 @@ public class TwoLevelCache {
         // 广播给**别的节点**，让它们也清掉自己那份 L1。
         // 少了这一步，多节点部署下别的节点会一直拿旧值供数，直到自己的 L1 过期。
         broadcaster.broadcast(key);
+    }
+
+    /**
+     * 让一个 key 失效，但**等当前事务提交之后**再动手。写路径应该用这个方法，不是 {@link #evict}。
+     *
+     * <p><b>为什么必须等提交。</b> 失效只能排在"库里已经是新值"之后。在事务体里直接删的话，
+     * "缓存被删"这个事实会先于"库被改"对外可见——中间那道窗口里进来的并发读会发现缓存空了、
+     * 于是回源，而它读到的仍是**还没提交的旧值**，转头就把旧值写回了缓存。
+     * 结果是缓存一直脏着，直到 TTL 到期。
+     *
+     * <p>换句话说：**在事务里删，等于把顺序做成了「先删缓存、再更新库」**——那正是
+     * 设计稿 §4 否决掉的那个方案，而且它看起来跟正确写法只差一行，不会报错。
+     *
+     * <p><b>为什么回滚时不删。</b> 库里的值根本没变过，缓存本来就不脏；
+     * 删了不出错，只是白让下一次读多回源一次。
+     *
+     * <p><b>不在事务里时会立刻删。</b> 这个方法不是"只对事务生效"，而是"**尽量**排到提交后"：
+     * 没有事务同步在跑（比如被定时任务、测试直接调用）时，等一个永远不会到来的提交
+     * 就等于永远不删。宁可少一层保护，也不能让缓存永远不失效。
+     */
+    public void evictAfterCommit(String key) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    evict(key);
+                }
+            });
+        } else {
+            evict(key);
+        }
     }
 
     /** 累计回源次数。给闸门实验用（见类注释）。 */
