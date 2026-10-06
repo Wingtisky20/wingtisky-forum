@@ -14,6 +14,9 @@ import java.time.LocalDateTime;
  * "一个字段有时有值有时没有"会让每个读它的人都要先判断一次能不能用。
  *
  * @param author 可能为 null，见 {@link PostListItem#author()} 的说明
+ * @param liked  **当前登录的人**点过赞吗。未登录时恒为 {@code false}——
+ *               所以前端在未登录时不能靠它判断"这条帖子没人点赞"
+ * @param collected 同上，收藏
  */
 public record PostDetail(
         Long id,
@@ -27,11 +30,13 @@ public record PostDetail(
         int likeCount,
         int commentCount,
         int collectCount,
+        boolean liked,
+        boolean collected,
         LocalDateTime createTime,
         LocalDateTime updateTime
 ) {
 
-    public static PostDetail from(Post post, UserBrief author) {
+    public static PostDetail from(Post post, UserBrief author, boolean liked, boolean collected) {
         return new PostDetail(
                 post.getId(),
                 post.getTitle(),
@@ -44,6 +49,8 @@ public record PostDetail(
                 post.getLikeCount(),
                 post.getCommentCount(),
                 post.getCollectCount(),
+                liked,
+                collected,
                 post.getCreateTime(),
                 post.getUpdateTime());
     }

@@ -8,6 +8,7 @@ import com.wingtisky.forum.forum.content.dto.PostListItem;
 import com.wingtisky.forum.forum.content.dto.PostQuery;
 import com.wingtisky.forum.forum.content.dto.PostSort;
 import com.wingtisky.forum.forum.content.dto.UpdatePostRequest;
+import com.wingtisky.forum.forum.content.service.InteractionService;
 import com.wingtisky.forum.forum.content.service.PostService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -37,9 +39,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class PostController {
 
     private final PostService postService;
+    private final InteractionService interactionService;
 
-    public PostController(PostService postService) {
+    public PostController(PostService postService, InteractionService interactionService) {
         this.postService = postService;
+        this.interactionService = interactionService;
     }
 
     /**
@@ -75,10 +79,51 @@ public class PostController {
         return Result.success(postService.page(new PostQuery(page, size, sort, tagId)));
     }
 
-    /** 帖子详情。**公开接口**。注意它会顺手给浏览数 +1。 */
+    /**
+     * 帖子详情。**公开接口**。注意它会顺手给浏览数 +1。
+     *
+     * <p>{@code @AuthenticationPrincipal} 拿不到时是 {@code null}（匿名访问）——
+     * 详情是公开的，不登录也能看，只是响应里的 {@code liked} / {@code collected}
+     * 恒为 false（它们回答的是"**你**点过没"）。
+     */
     @GetMapping("/posts/{id}")
-    public Result<PostDetail> detail(@PathVariable Long id) {
-        return Result.success(postService.getDetail(id));
+    public Result<PostDetail> detail(@PathVariable Long id,
+                                     @AuthenticationPrincipal Long viewerId) {
+        return Result.success(postService.getDetail(id, viewerId));
+    }
+
+    /**
+     * 点赞。**重复点不会出错**，返回的仍是成功——幂等由数据库的联合主键保证
+     * （ADR-0017），不是靠应用层"先查一查"。
+     *
+     * <p>用 {@code PUT} 而不是 {@code POST}：{@code PUT} 的语义就是"把资源设置成这个状态"，
+     * 天生幂等；而点赞恰好就是这个语义。
+     */
+    @PutMapping("/posts/{id}/like")
+    public Result<Void> like(@PathVariable Long id, @AuthenticationPrincipal Long userId) {
+        interactionService.like(id, userId);
+        return Result.success();
+    }
+
+    /** 取消点赞。本来就点过赞也算成功（幂等），但计数不会被动两次。 */
+    @DeleteMapping("/posts/{id}/like")
+    public Result<Void> unlike(@PathVariable Long id, @AuthenticationPrincipal Long userId) {
+        interactionService.unlike(id, userId);
+        return Result.success();
+    }
+
+    /** 收藏。语义与点赞一致。 */
+    @PutMapping("/posts/{id}/collect")
+    public Result<Void> collect(@PathVariable Long id, @AuthenticationPrincipal Long userId) {
+        interactionService.collect(id, userId);
+        return Result.success();
+    }
+
+    /** 取消收藏。 */
+    @DeleteMapping("/posts/{id}/collect")
+    public Result<Void> uncollect(@PathVariable Long id, @AuthenticationPrincipal Long userId) {
+        interactionService.uncollect(id, userId);
+        return Result.success();
     }
 
     /**

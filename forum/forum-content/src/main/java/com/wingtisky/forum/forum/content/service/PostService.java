@@ -46,13 +46,16 @@ public class PostService {
     private final PostMapper postMapper;
     private final UserQueryService userQueryService;
     private final TagService tagService;
+    private final InteractionService interactionService;
 
     public PostService(PostMapper postMapper,
                        UserQueryService userQueryService,
-                       TagService tagService) {
+                       TagService tagService,
+                       InteractionService interactionService) {
         this.postMapper = postMapper;
         this.userQueryService = userQueryService;
         this.tagService = tagService;
+        this.interactionService = interactionService;
     }
 
     /**
@@ -135,7 +138,7 @@ public class PostService {
      * 这是有意接受的——M2 先用最直接的方式把数据记下来，
      * **M3 会把它换成 Redis 累加 + 定期回写**，那时只改这一行。
      */
-    public PostDetail getDetail(Long id) {
+    public PostDetail getDetail(Long id, Long viewerId) {
         Post post = postMapper.selectById(id);
         if (post == null) {
             throw new BizException(ErrorCode.POST_NOT_FOUND);
@@ -148,7 +151,11 @@ public class PostService {
         post.setViewCount(post.getViewCount() + 1);
 
         UserBrief author = userQueryService.findBrief(post.getAuthorId()).orElse(null);
-        return PostDetail.from(post, author);
+
+        // 未登录时 viewerId 为 null，InteractionService 会直接返回 false 且**不查库**
+        return PostDetail.from(post, author,
+                interactionService.liked(id, viewerId),
+                interactionService.collected(id, viewerId));
     }
 
     /**
