@@ -9,7 +9,7 @@
 > spec §6.2（M3 闸门）、architecture.md §3.2 与 §4.3（机制 vs 策略）、§5（亮点体系）、
 > ADR-0016（计数冗余存内容表）
 > **上一份**：`docs/03-design/m2-content-core.md`
-> **下一份要产出的**：实施计划 `docs/superpowers/plans/2026-10-XX-m3-cache.md`（本文审过之后再写）
+> **下一份**：实施计划 [`docs/superpowers/plans/2026-10-06-m3-cache.md`](../superpowers/plans/2026-10-06-m3-cache.md)（2026-10-06 已产出；11 个 Task 全部完成）
 
 ---
 
