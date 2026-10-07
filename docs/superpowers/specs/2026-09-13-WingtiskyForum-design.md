@@ -424,6 +424,17 @@ WingtiskyForum/
 └─ tools/                         check-doc-refs / check-deps
 ```
 
+> **⚠️ 2026-10-07 补：上面这棵树是"规划布局"，有几处与现状不符，照它找文件会扑空。**
+>
+> | 树里写的 | 实际 |
+> |---|---|
+> | `forum-common/ forum-domain/ forum-infra/` | 已改名为 **`wt-common/ wt-domain/ wt-infra/`**（见 §4.2 的变更说明） |
+> | `docs/01-requirements/prd.md`、`domain-model.md` | 该目录下**只有 `glossary.md`** |
+> | `docs/03-design/database.md`、`03-design/api/` | **从来没建出来过**。表结构在 `db/V1__…`、`db/V2__…`；接口形状散在各模块的 `dto/` 与 `docs/05-interview/`（§0 已有一处同样的指针） |
+> | `roadmap-to-microservices.md`、`docs/assets/` | 均未建出 |
+>
+> **只加指针、不改树**——它是设计期快照，改了就失去"当时打算长什么样"的信息。
+
 **设计细节**：
 - `docs/` 用**数字前缀**（00/01/02…）—— **阅读顺序即接手顺序**，新对话按编号读即可。
 - `05-interview/` 与 `06-runbook/troubleshooting.md` 单独成目录 —— 面向的是人（你和面试官），混在技术文档中会被淹没。
@@ -802,9 +813,9 @@ JDK 17 编译 → 单元测试 → check-deps → check-doc-refs
 | # | 开放问题 | 决策时点 |
 |---|---|---|
 | 1 | 社区命名与主题 | **已定：深栈**（双关：技术**栈** + **深**度）。配色与 Logo 提示词在 M1 前端视觉设计阶段产出 |
-| 2 | JDK 17（已装）vs JDK 21（虚拟线程是加分点） | M0 前 |
+| 2 | JDK 17（已装）vs JDK 21（虚拟线程是加分点） | **已定：不升级**（2026-10-07 标注）。理由见 ADR-0001 |
 | 3 | 鉴权方案 | **已定：JWT（无状态）**。关键理由：JWT 可在**每个服务本地验签**，无需跨服务调用户接口——这把"鉴权"从跨服务依赖变成本地操作，是拆分变简单的关键设计 |
-| 4 | 亮点 1 与亮点 2 的一致性权衡：同步失效 vs 异步失效 | M3（ADR） |
+| 4 | 亮点 1 与亮点 2 的一致性权衡：同步失效 vs 异步失效 | **已定：[ADR-0019](../02-decisions/ADR-0019-sync-cache-invalidation.md)（同步删缓存，暂时不等 Kafka）**。**触发条件**：M4 的 Kafka 建好后用真实数据回头比一次（2026-10-07 标注） |
 | 5 | 图片是否生成 AI 提示词；架构图是否用 Mermaid（已倾向 Mermaid） | M0 |
 | 6 | 是否需要可视化伴侣（浏览器中展示 UI 稿 / 架构图） | 首次出现视觉问题时 |
 | 7 | CI 中是否用 Testcontainers 跑集成测试 | M10 |
@@ -844,6 +855,12 @@ JDK 17 编译 → 单元测试 → check-deps → check-doc-refs
 | 9 | 提交邮箱 | GitHub noreply |
 
 ### 环境实测记录（2026-09-13）
+
+> **⚠️ 2026-10-07 提醒**：下面这张表是 **2026-09-13 当天的快照**。
+> 其中「Kafka 2.8.1(+ZK) · ES 6.8.23」是**旧项目**（`D:\aaaDocuments\aaaCommunity`）
+> 留在 D 盘的那两个，**不是本项目用的**。
+> 本项目 M0 装的是 **Kafka 3.9.1（KRaft，无 ZooKeeper）/ ES 8.18.3 + IK**，
+> 见 `CLAUDE.md` 的「环境事实」与 `docs/06-runbook/local-setup.md` §2。
 
 | 项 | 实测值 |
 |---|---|

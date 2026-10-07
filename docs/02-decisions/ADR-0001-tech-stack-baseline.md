@@ -78,3 +78,24 @@ Redisson **3.52.0** 目前**只做过编译期验证**（依赖能解析、代�
 **M3 首次真正接入 Redis 时必须实测**：若运行时报 `ERR unknown command`，则降级 Redisson 到兼容版本，并把结论追加到本节。
 
 **同理不采用 4.x 线**：Redisson 4.x 可能要求 Redis 6+，与本机被锁死的 Redis 5 直接冲突。
+
+**同理不采用 4.x 线**：Redisson 4.x 可能要求 Redis 6+，与本机被锁死的 Redis 5 直接冲突。
+
+### 2026-10-06 · 上面的待办**已关闭**：实测兼容
+
+**结论**：Redisson **3.52.0 × Redis 5.0.14.1 —— 兼容**。加锁 / 释放 / 看门狗参数在
+5.0.14.1 上都正常，**没有 `ERR unknown command`**。
+
+**因此**：无需降级、无需修订本 ADR 的任何结论。守着它的测试是
+`RedissonSmokeIntegrationTest`（连本机真实 Redis 的集成测试，不进 CI）。
+
+**顺带记一条实测更正**（与本条待办无关，但同一批接入时发现的）：
+`redisson-spring-boot-starter` 会装配自己的 `RedisConnectionFactory`，
+Spring Boot 那个 Lettuce 的因 `@ConditionalOnMissingBean` 直接退让——
+**注入给应用的 `StringRedisTemplate` 本身就是 Redisson 实现的**。
+即"两个客户端各管一摊"的说法不成立，详见 `docs/03-design/m3-cache.md` §5。
+
+> **本节按 ADR 状态变更规程追加，不改动上面的原文**——
+> "待办"当时确实是待办；它被关掉这件事，恰恰是这条 ADR 值得留着的部分。
+> 补这节的原因：本节原本一直缺席，而 `STATUS.md` 与 `local-setup.md` 都已经写着
+> "已实测通过、就此关闭"——**同一件事三处说法不一致**，是 2026-10-07 的交接验收测试抓出来的。
