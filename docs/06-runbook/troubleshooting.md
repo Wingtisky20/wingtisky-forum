@@ -536,3 +536,68 @@ Caused by: java.lang.NoSuchMethodException: ...TwoLevelCache.<init>()
 >
 > 更省事的做法是别让测试需要第二个构造器——但那有时做不到
 > （比如要注入一个生产环境不该暴露的参数）。做不到时，就标注解。
+
+---
+
+## 2026-10-07 · 打开 `enforce_admins` 失败：方法用错，被伪装成"权限不足"
+
+**现象**：想打开 `main` 分支保护的"管理员也要遵守"开关，命令返回
+
+```
+gh api -X PUT repos/:owner/:repo/branches/main/protection/enforce_admins -f enabled=true
+→ {"message": "Not Found"}   （HTTP 404）
+```
+
+`Not Found` 被读成了"你没有这个权限"。于是得出的结论是"命令行令牌不含仓库管理权限，
+改不了分支保护，**这一项要留给人在网页上做**"——**这个结论是错的**，
+而且它已经写进执行记录、状态源和给用户的口头汇报里了。
+
+**根因**：`enforce_admins` 是一个**独立子资源**，它的写操作只接受
+**`POST`（打开）/ `DELETE`（关闭）**，**没有 `PUT`**。
+方法用错时，GitHub 不回 `405 Method Not Allowed`（那样一眼就能看出是方法问题），
+而是回一个含糊的 `404 Not Found`——**它和"无权访问"的返回长得一模一样**。
+
+**定位的关键一步：先发一个只读的 `GET`。**
+
+```bash
+# 同一个路径，只读能通 → 说明路径与权限都没问题，问题只在请求本身
+gh api repos/:owner/:repo/branches/main/protection/enforce_admins
+→ {"enabled":false}
+```
+
+**同一次排查里顺手否掉的另外两个猜测**（免得下次再猜一遍）：
+
+| 猜测 | 实测 |
+|---|---|
+| 令牌权限不够 | `gh api repos/... --jq '.permissions'` → `{"admin":true,...}`，**权限是够的** |
+| 仓库改用了新式 rulesets，老保护接口已废 | `gh api repos/.../rulesets` → `[]`，**没启用** |
+
+**解决**：换成 `POST`。
+
+```bash
+gh api --method POST repos/:owner/:repo/branches/main/protection/enforce_admins
+→ {"url":"...","enabled":true}
+```
+
+**验证**（先只读复核，再做一次真实推送——只报"命令成功"不算数）：
+
+| # | 动作 | 结果 |
+|---|---|---|
+| 1 | 只读复核开关 | `{"enabled":true}` |
+| 2 | 造一个空提交直接推 `main` | **被拒**：`remote: error: GH006: Protected branch update failed for refs/heads/main.` / `Changes must be made through a pull request.` |
+| 3 | 清掉试验提交 | `git reset --hard HEAD~1`，远端未受影响 |
+
+**反悔**：`gh api --method DELETE <同一路径>`，或网页上取消勾选
+**"Do not allow bypassing the above settings"**。
+
+**教训**：
+
+1. **`404` 不只表示"没有权限"，也表示"没有这个路由/方法"。** 二者在返回体上几乎无法区分，
+   但可以用**只读 `GET`** 把资格问题和请求问题分开：同一个路径 GET 得通、写却 404，
+   资格就没问题。
+2. **别在证据只有半条的时候就写下结论。** 这次的错误结论活了几个小时，
+   期间它被写进执行记录、状态源，并被当成"需要用户动手的事"口头汇报给用户——
+   一次误判在文档里扩散了三处。**判断"做不到"和判断"做到了"是同一个证据标准。**
+3. **报错信息的措辞会引导方向。** `Not Found` 里的 "Found" 天然让人往"找不到资源/没权限"
+   想，而真因是"这个方法不存在"。
+
