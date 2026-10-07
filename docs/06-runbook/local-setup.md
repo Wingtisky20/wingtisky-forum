@@ -4,7 +4,7 @@
 > 与生产环境的差异"——后者是面试时的加分项，不是可选项。
 >
 > 配套：`troubleshooting.md`（踩过的坑）、`scripts/`（启停脚本）。
-> 最后更新：2026-10-05
+> 最后更新：2026-10-07（M3 收尾：Redis 从"可选"变"必须"、浏览数改成最终一致）
 
 ---
 
@@ -75,12 +75,22 @@ mysql -u root -p -e "SHOW GRANTS FOR 'wingtisky'@'localhost';"
 ### 3.2 建表
 
 ```bash
+# V1：用户域（M1）
 mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum      < db/V1__init_user.sql
 mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum_test < db/V1__init_user.sql
+
+# V2：内容域（M2）—— 帖子 / 评论 / 标签 / 点赞 / 收藏 / 帖子标签
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum      < db/V2__init_content.sql
+mysql --default-character-set=utf8mb4 -u wingtisky -p wingtisky_forum_test < db/V2__init_content.sql
 ```
 
+> **⚠️ 2026-10-07 补：上面原来只列了 `V1__`。** M2 加了 `V2__init_content.sql`，
+> 却没回头更新这一节——照着旧版本做，**应用能起来，但一碰内容域就报"表不存在"**。
+> 这正是本文档被 `troubleshooting.md` 反复提醒的那类问题：**漏一步不报错，只在下游炸**。
+> 以后每加一个 `V*__` 脚本，回来加一行。
+
 > ⚠️ **`V1__` 这种命名看起来像 Flyway，但本项目没有引入 Flyway**（它不在技术栈白名单里）。
-> 文件只是按那个约定命名，**靠手工执行**。后续里程碑新增表时沿用 `V2__`、`V3__` 即可，
+> 文件只是按那个约定命名，**靠手工执行**。后续里程碑新增表时沿用 `V3__`、`V4__` 即可，
 > 别忘了**开发库和测试库都要执行**——只对开发库执行的话，集成测试会因为缺表而失败，
 > 而那个报错信息（"表不存在"）不会提示你去跑脚本。
 
