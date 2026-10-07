@@ -148,7 +148,9 @@ app/                                        唯一启动模块（M9 拆为 forum
 
 - 16G 内存 · Ryzen 5 4500U（6 核）· **C 盘仅剩 ~19G，安装一律 D 盘**
 - JDK 17.0.16 · Maven / Node 在 `D:\aaaSoftware`
-- 中间件在 `D:\aaaSoftware`：MySQL 8.0.41（已装）· Redis 5.0.14.1（已装）· **Kafka 3.9 / ES 8.18.3 待装**
+- 中间件在 `D:\aaaSoftware`：MySQL 8.0.41（已装 · 常驻）· Redis 5.0.14.1（已装 · **M3 起是启动期硬依赖**，不起它应用起不来）
+- **Kafka 3.9.1 / ES 8.18.3：M0 就装好并验证过能启动**（`kafka-3.9.1/`、`elasticsearch-8.18.3/`），现在没起着——分别到 M4 / M5 才用得上。
+  ⚠️ 曾经这里写着"待装"，2026-10-07 更正。**新对话别再去装它们。**
 - **无 Docker、无 WSL2** —— 集成测试连本地中间件，不在 CI 跑
 - **git 访问 GitHub 必须走代理**：本机 Clash Verge 混合端口 `127.0.0.1:18569`，已通过 `git config --local` 配置（**Clash 未运行时 git push 会失败，不是仓库坏了**）。详见 `docs/06-runbook/troubleshooting.md`
 - 仓库地址：https://github.com/Wingtisky20/wingtisky-forum（Public）
