@@ -148,12 +148,18 @@ app/                                        唯一启动模块（M9 拆为 forum
 
 ## 环境事实
 
-- 16G 内存 · Ryzen 5 4500U（6 核）· **C 盘仅剩 ~19G，安装一律 D 盘**
+- 16G 内存 · Ryzen 5 4500U（6 核）· **C 盘仅剩 ~32G，安装一律 D 盘**
 - JDK 17.0.16 · Maven / Node 在 `D:\aaaSoftware`
 - 中间件在 `D:\aaaSoftware`：MySQL 8.0.41（已装 · 常驻）· Redis 5.0.14.1（已装 · **M3 起是启动期硬依赖**，不起它应用起不来）
-- **Kafka 3.9.1 / ES 8.18.3：M0 就装好并验证过能启动**（`kafka-3.9.1/`、`elasticsearch-8.18.3/`），现在没起着——分别到 M4 / M5 才用得上。
-  ⚠️ 曾经这里写着"待装"，2026-10-07 更正。**新对话别再去装它们。**
-- **无 Docker、无 WSL2** —— 集成测试连本地中间件，不在 CI 跑
+- ⚠️ **Kafka 与 ES 要从原生 Windows 迁进 WSL2**（2026-10-07 定，见 ADR-0020）。
+  **别再用原生那套**：原生 Windows 上 Kafka broker **凡要回收磁盘就自毁**（当天实测崩 16 次，
+  删日志段、删主题都会触发），相关官方工单至今 Open。**这条不是配置问题，绕不过去。**
+  旧的 `D:\aaaSoftware\kafka-3.9.1` **保留备查，不要删**。
+  - **WSL2 尚未安装**：装它要管理员权限，CLI 做不了 → 见 `docs/STATUS.md`「阻塞项」
+  - 装好之后：Kafka 与 ES 都在 WSL2 里跑，Windows 侧应用照旧连 `localhost:9092`
+  - 详细排查记录见 `docs/06-runbook/troubleshooting.md` 2026-10-07 条目
+- **无 Docker**（Win10 **Home**，无 Hyper-V 后端，装不了 Docker Desktop）· **无 WSL2** —— 集成测试连本地中间件，不在 CI 跑
+  （WSL2 装好后这条要改：中间件将跑在 WSL2 里）
 - **git 访问 GitHub 必须走代理**：本机 Clash Verge 混合端口 `127.0.0.1:18569`，已通过 `git config --local` 配置（**Clash 未运行时 git push 会失败，不是仓库坏了**）。详见 `docs/06-runbook/troubleshooting.md`
 - 仓库地址：https://github.com/Wingtisky20/wingtisky-forum（Public）
 
