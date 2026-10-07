@@ -27,13 +27,18 @@
 
 | 中间件 | 版本 | 端口 | 何时需要 | 状态 |
 |---|---|---|---|---|
-| MySQL | 8.0.41 | 3306 | 全程 | 沿用（早已装好） |
-| Redis | 5.0.14.1 | 6379 | **M1 起** | 沿用 |
-| Kafka | 3.9.1（KRaft） | 9092 / 9093 | M4 起 | 沿用（M0 已装并验证过能启动，**还没跑过真链路**） |
-| Elasticsearch | 8.18.3 + IK | 9200 / 9300 | M5 起 | 沿用（M0 已装并验证过能启动） |
+| MySQL | 8.0.41 | 3306 | 全程 | 沿用（早已装好 · 常驻运行） |
+| Redis | 5.0.14.1 | 6379 | **M1 起** | 沿用（**M3 起是启动期硬依赖**） |
+| Kafka | 3.9.1（KRaft） | 9092 / 9093 | M4 起 | ⛔ **原生 Windows 上不可用**（凡回收磁盘必崩），**待迁入 WSL2**；见 §6 开头与 [ADR-0020](../02-decisions/ADR-0020-wsl2-for-kafka.md) |
+| Elasticsearch | 8.18.3 + IK | 9200 / 9300 | M5 起 | ⚠️ 原生可用性未验证；**建议与 Kafka 一起挪进 WSL2**（ADR-0020 后果一节） |
 
 **按需启动**（architecture.md §6.2）：做内容域时只起 MySQL + Redis 就够，
 不必四个全开。
+
+> **WSL2 尚未安装**（2026-10-07）：装它需要管理员权限，当前 CLI 会话是非提权的。
+> 用户手动装好之前，**M4 处于阻塞状态**——见 `docs/STATUS.md`「阻塞项」。
+> 装好之后，Kafka 与 ES 都从 WSL2 里起，Windows 侧应用照旧连 `localhost:9092` / `localhost:9200`，
+> 业务代码与配置不变。
 
 > **旧版本保留未删**：`elasticsearch-6.8.23` 与 `kafka`（2.8.1，带 ZooKeeper）
 > 仍在 `D:\aaaSoftware` 下，属于上一个项目。**不要覆盖它们**——一是旧项目可能
@@ -254,6 +259,27 @@ curl -s "http://localhost:9200/_analyze" -H 'Content-Type: application/json' \
 ---
 
 ## 6. Kafka 3.9.1（KRaft 模式，无 ZooKeeper）
+
+> ### ⛔ 2026-10-07 起：**本节描述的「原生 Windows 部署」已废弃，不要照做。**
+>
+> **原因**：原生 Windows 上的 Kafka broker **凡需要回收磁盘就会自杀**——
+> 删日志段、删主题、日志压缩清理，任意一个触发即崩（当天实测 **16 次**，
+> 报 `另一个程序正在使用此文件` 后 `Shutdown broker because all log dirs have failed`）。
+> 排除实验做了九轮：与数据新旧、目录新旧、杀毒软件、保留期长短、清理器开关**都无关**；
+> 唯一相关的是"这一次运行中有东西要删"。
+>
+> **决策**：Kafka 迁入 **WSL2**（不用 Docker——本机是 Win10 **Home**，
+> 无 Hyper-V 后端装不了 Docker Desktop，且 C 盘只剩 32 GB）。
+> 完整决策与三个被否决方案见 [ADR-0020](../02-decisions/ADR-0020-wsl2-for-kafka.md)；
+> 排查过程（含五个说错过的结论）见 [troubleshooting.md](troubleshooting.md) 2026-10-07 条目。
+>
+> **当前状态**：**WSL2 尚未安装**（要管理员权限，CLI 做不了）→ 见 `docs/STATUS.md`「阻塞项」。
+> **WSL2 装好之后，本节会被一节「在 WSL2 里装 Kafka」取代**——
+> 届时下载地址与版本仍然适用（Kafka 3.9.x 只有 `archive.apache.org` 有），
+> 但 `log.dirs` 必须指向 **WSL2 自己的文件系统**（如 `~/kafka/kraft-logs`），
+> **不要放 `/mnt/d/...`**——那是跨文件系统访问，性能差，而且可能把 Windows 的坑请回来。
+>
+> 下面这一节**保留原文备查**，它记录的下载与格式化步骤对 WSL2 方案依然有参考价值。
 
 ### 6.1 下载与解压
 
