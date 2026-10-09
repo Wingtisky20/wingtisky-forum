@@ -27,18 +27,25 @@
 
 | 中间件 | 版本 | 端口 | 何时需要 | 状态 |
 |---|---|---|---|---|
-| MySQL | 8.0.41 | 3306 | 全程 | 沿用（早已装好 · 常驻运行） |
-| Redis | 5.0.14.1 | 6379 | **M1 起** | 沿用（**M3 起是启动期硬依赖**） |
-| Kafka | 3.9.1（KRaft） | 9092 / 9093 | M4 起 | ⛔ **原生 Windows 上不可用**（凡回收磁盘必崩），**待迁入 WSL2**；见 §6 开头与 [ADR-0020](../02-decisions/ADR-0020-wsl2-for-kafka.md) |
-| Elasticsearch | 8.18.3 + IK | 9200 / 9300 | M5 起 | ⚠️ 原生可用性未验证；**建议与 Kafka 一起挪进 WSL2**（ADR-0020 后果一节） |
+| MySQL | 8.0.41 | 3306 | 全程 | 沿用（早已装好 · 常驻运行）**Windows 原生，不动** |
+| Redis | 5.0.14.1 | 6379 | **M1 起** | 沿用（**M3 起是启动期硬依赖**）**Windows 原生，不动** |
+| Kafka | 3.9.1（KRaft） | 9092 | M4 起 | ✅ **可用**——跑在 **WSL2 的 Docker 容器**里；见 §6 |
+| Elasticsearch | 8.18.3 + IK | 9200 / 9300 | M5 起 | 未起；**M5 也走 Docker**（同一个 compose 文件） |
 
 **按需启动**（architecture.md §6.2）：做内容域时只起 MySQL + Redis 就够，
 不必四个全开。
 
-> **WSL2 尚未安装**（2026-10-07）：装它需要管理员权限，当前 CLI 会话是非提权的。
-> 用户手动装好之前，**M4 处于阻塞状态**——见 `docs/STATUS.md`「阻塞项」。
-> 装好之后，Kafka 与 ES 都从 WSL2 里起，Windows 侧应用照旧连 `localhost:9092` / `localhost:9200`，
-> 业务代码与配置不变。
+> **中间件分两处承载**（2026-10-08 定，决策见 [ADR-0021](../02-decisions/ADR-0021-docker-in-wsl2.md)）：
+> **MySQL 与 Redis 在 Windows 原生；Kafka 与 ES 在 WSL2 的 Docker 容器里。**
+> 判据是"动它值不值"——只动了坏掉的那个（Kafka）和跟它同类的那个（ES）。
+> Windows 侧应用**照旧连 `localhost:9092` / `localhost:9200`**，配置不用改。
+
+> **WSL2 已装**（2026-10-08）：Ubuntu-22.04，虚拟磁盘在
+> `D:\aaaSoftware\wsl\Ubuntu-22.04\ext4.vhdx`（**在 D 盘**，所以 WSL2 里装的一切都落 D 盘）。
+> 内存上限 6 GB，配置在 `C:\Users\w\.wslconfig`。
+>
+> ⚠️ **起 Kafka 的窗口要一直开着** —— WSL2 空闲约 1 分钟会自动关机，容器跟着死。
+> 详见 §6.4。
 
 > **旧版本保留未删**：`elasticsearch-6.8.23` 与 `kafka`（2.8.1，带 ZooKeeper）
 > 仍在 `D:\aaaSoftware` 下，属于上一个项目。**不要覆盖它们**——一是旧项目可能
@@ -258,31 +265,53 @@ curl -s "http://localhost:9200/_analyze" -H 'Content-Type: application/json' \
 
 ---
 
-## 6. Kafka 3.9.1（KRaft 模式，无 ZooKeeper）
+## 6. Kafka 3.9.1（KRaft 模式）—— 跑在 WSL2 的 Docker 容器里
 
-> ### ⛔ 2026-10-07 起：**本节描述的「原生 Windows 部署」已废弃，不要照做。**
+> ### 先读这一节。下面 §6.1 起是**已废弃**的原生 Windows 装法，保留备查。
 >
-> **原因**：原生 Windows 上的 Kafka broker **凡需要回收磁盘就会自杀**——
-> 删日志段、删主题、日志压缩清理，任意一个触发即崩（当天实测 **16 次**，
-> 报 `另一个程序正在使用此文件` 后 `Shutdown broker because all log dirs have failed`）。
+> **怎么用（日常只要这两条）**：
+>
+> ```bash
+> scripts\start-kafka.bat     # 启动（⚠️ 这个窗口要一直开着，关了 Kafka 就停）
+> scripts\stop-kafka.bat      # 停止（保留数据）
+> ```
+>
+> **配置文件在仓库里**：`deploy/docker-compose.yml`。
+> 要改 Kafka 的参数，改那个文件，然后重跑 `start-kafka.bat`。
+> **要连数据一起清空重来**（相当于换个全新环境）：
+>
+> ```bash
+> # 在 WSL2 里执行
+> docker compose -f /mnt/d/aaaDocuments/project/WingtiskyForum/deploy/docker-compose.yml down -v
+> ```
+>
+> ### 为什么是 Docker（而不是原生、也不是手工装）
+>
+> **原生 Windows 走不通**：Kafka broker **凡需要回收磁盘就会自杀**——
+> 删日志段、删主题、日志压缩清理，任意一个触发即崩（2026-10-07 实测 **16 次**，
+> 报 `另一个程序正在使用此文件` 后 `Shutdown broker because all log dirs failed`）。
 > 排除实验做了九轮：与数据新旧、目录新旧、杀毒软件、保留期长短、清理器开关**都无关**；
 > 唯一相关的是"这一次运行中有东西要删"。
 >
-> **决策**：Kafka 迁入 **WSL2**（不用 Docker——本机是 Win10 **Home**，
-> 无 Hyper-V 后端装不了 Docker Desktop，且 C 盘只剩 32 GB）。
-> 完整决策与三个被否决方案见 [ADR-0020](../02-decisions/ADR-0020-wsl2-for-kafka.md)；
-> 排查过程（含五个说错过的结论）见 [troubleshooting.md](troubleshooting.md) 2026-10-07 条目。
+> **WSL2 里手工装也不选**：装成了、也能用，但为了让它跑起来我手工改过
+> DNS、IPv6、listener、数据目录、heap——**没有一处写进可提交的文件**，换台机器就得重来。
 >
-> **当前状态**：**WSL2 尚未安装**（要管理员权限，CLI 做不了）→ 见 `docs/STATUS.md`「阻塞项」。
-> **WSL2 装好之后，本节会被一节「在 WSL2 里装 Kafka」取代**——
-> 届时下载地址与版本仍然适用（Kafka 3.9.x 只有 `archive.apache.org` 有），
-> 但 `log.dirs` 必须指向 **WSL2 自己的文件系统**（如 `~/kafka/kraft-logs`），
-> **不要放 `/mnt/d/...`**——那是跨文件系统访问，性能差，而且可能把 Windows 的坑请回来。
+> **所以选了 Docker**：配置变成一份**能进仓库、能审、能 diff** 的文件，
+> 重置环境是 `down -v` 一句话。
 >
-> 下面这一节**保留原文备查**，它记录的下载与格式化步骤对 WSL2 方案依然有参考价值。
+> 完整决策：[ADR-0020](../02-decisions/ADR-0020-wsl2-for-kafka.md)（离开原生）、
+> [ADR-0021](../02-decisions/ADR-0021-docker-in-wsl2.md)（改用 Docker，含三个被否决方案）。
+> 排查过程（含五个说错过的结论）见 [troubleshooting.md](troubleshooting.md)。
+>
+> ### 6.4 起是三条**必须知道**的注意事项（窗口要开着、端口别绑回环、内存账），
+> 遇到问题先看那里。
 
-### 6.1 下载与解压
+### 6.1 下载与解压（**已废弃，保留备查**）
 
+> ⚠️ 以下步骤**不要照做**。它记录的是原生 Windows 的安装过程，
+> 那条路已被证伪（见上）。保留它是因为**下载与格式化的知识对理解 KRaft 仍然有用**，
+> 而且如果将来要在别的 Linux 环境里手工装，这些步骤可以直接参考。
+>
 > **Kafka 3.9.x 已经是归档版本，国内镜像全都没有。** 实测清华 / 阿里 / 中科大 /
 > 南大 / 网易 / 华为云均只保留当前发布版（4.1~4.3），3.9.x 一律 404，只能从
 > `archive.apache.org` 取。**直连约 8 KB/s、走代理一开始约 16 KB/s**，但速度会
@@ -382,20 +411,30 @@ tasklist | grep -i java           # → 有 Kafka broker
 
 ## 7. 一键启停
 
+### 7.1 Kafka（WSL2 + Docker）
+
+| 脚本 | 作用 |
+|---|---|
+| `scripts/start-kafka.bat` | 启动 Kafka 容器，**然后前台挂住不退出** |
+| `scripts/stop-kafka.bat` | 停止容器（**保留数据**） |
+
+**⚠️ start-kafka.bat 的那个窗口要一直开着。** 关掉它 = 停掉 Kafka。
+这不是偷懒，是**必须**——见 §7.3。
+
+**要清空数据重来**（相当于换一个全新环境）：
+
+```bash
+# 在 WSL2 里执行
+docker compose -f /mnt/d/aaaDocuments/project/WingtiskyForum/deploy/docker-compose.yml down -v
+```
+
+### 7.2 ES（原生，M5 之前会一并挪进 Docker）
+
 | 脚本 | 作用 |
 |---|---|
 | `scripts/start-es.bat` | 启动 ES（堆固定 1G，启动前切到安装目录） |
-| `scripts/start-kafka.bat` | 启动 Kafka（KRaft 配置） |
 
-**关于脚本里的两处"看起来多余"的写法，都不是多余**（详见 `troubleshooting.md`）：
-
-1. **注释全用英文**——`.bat` 里的中文在 zh-CN 控制台下会被 cmd 按 GBK 解码，
-   而文件在 git 里是 UTF-8，结果是把行拆散、整个脚本崩掉。
-2. **`call .\elasticsearch.bat` 里的 `.\` 前缀**——Git Bash 会设置
-   `NoDefaultCurrentDirectoryInExePath=1` 并传给子进程，cmd 因此不再从当前目录
-   找可执行文件，不加前缀会报"不是内部或外部命令"，即使 `cd` 明明成功了。
-
-**停止**：按端口找 PID 再精确 kill，**不要用 `taskkill /IM java.exe`**——
+**停止**（原生那套）：按端口找 PID 再精确 kill，**不要用 `taskkill /IM java.exe`**——
 那会连带杀掉 IDEA 等所有 java 进程。
 
 ```bash
@@ -403,15 +442,54 @@ PID=$(netstat -ano | grep ':9200 ' | grep LISTENING | awk '{print $5}' | head -1
 taskkill //PID "$PID" //F
 ```
 
+### 7.3 三条必须知道的注意事项
+
+**① 窗口要开着 —— WSL2 空闲约 1 分钟会自己关机**
+
+不敲 WSL 命令约 1~2 分钟后，**整台虚拟机自动关掉**，容器跟着死，`localhost:9092` 就没了。
+表现是"**时好时坏**"：刚验证完是通的，过两分钟再试就不通。
+
+`vmIdleTimeout` 这个设置在本机 WSL（3.0.1.0）上**无效**，所以靠前台会话撑住。
+**实测**：挂住后 5 分钟 15 次探测全通；不挂时 12 次全断。
+
+> **定位手法**：这类"看着像随机故障"的问题，先去看系统日志有没有重启标记
+> （`journalctl -u docker`，看到 `Daemon shutdown complete` 后面跟着 `-- Boot --`
+> 就是整台虚拟机重启，**不是容器重启**）。详见 `troubleshooting.md`。
+
+**② compose 里的端口别绑 `127.0.0.1`**
+
+写成 `"127.0.0.1:9092:9092"` 时，**Windows 侧连不进来**——
+因为 WSL2 的 localhost 转发不接管只绑回环的端口。写成 `"9092:9092"` 才对。
+（写成回环时，Kafka 客户端报的是 `Timed out waiting for a node assignment`，
+**看着像配置问题，其实是连不上**。）
+
+**③ 内存账变了，M9 之前必须重算**
+
+WSL2 内存上限由 4 GB 抬到 **6 GB**（容器本身约 0.5 G 开销）。
+
+```
+MySQL(0.5) + Redis(0.05) + WSL2(6.0) + Windows/IDE/浏览器(4.5) ≈ 11 G / 16 G
+```
+
+**M5**（Kafka + ES 都开）时约 11 G，**能撑住**；
+但 **M9** 还要再加三个服务进程与 Nacos/Gateway，**会超预算**。
+→ 这是**明确的待办**，见 [ADR-0021](../02-decisions/ADR-0021-docker-in-wsl2.md)「内存账」。
+
 ---
 
 ## 8. 磁盘与内存注意事项
 
-- **一律装 D 盘**。C 盘空间紧张，且 Docker 默认把镜像放 C 盘（本项目不用 Docker，
-  但这条纪律通用）。
+- **一律装 D 盘**。C 盘空间紧张。
+  **WSL2 与 Docker 的落盘位置天然满足这条**——WSL2 的整块"硬盘"就是
+  `D:\aaaSoftware\wsl\Ubuntu-22.04\ext4.vhdx`，所以**WSL2 里装的一切**（Docker 引擎、镜像、
+  容器、数据卷）**都物理落在 D 盘**。**不要**再给 Docker 单独指定 `data-root`——
+  多一层间接，还容易和 WSL2 的磁盘管理打架。
 - **每个中间件压 1G 堆**。ES 与 Kafka 默认都会按物理内存的一半算堆，四个中间件
   加起来会直接吃掉一半内存。
 - **按需启动**。做内容域时不需要 Kafka 与 ES。
+- ⚠️ **两套历史 Kafka 安装都还在磁盘上，别删**：`D:\aaaSoftware\kafka-3.9.1`（原生，已废弃）
+  与 WSL2 里的 `/root/kafka`（手工装，已停用）。**它们是退路**——本次改动还没跑过完整里程碑，
+  等 M4 做完再清理。理由见 [ADR-0021](../02-decisions/ADR-0021-docker-in-wsl2.md)。
 
 ---
 

@@ -711,3 +711,154 @@ Error while executing topic command : Timed out waiting for a node assignment. C
 4. **一次说不清的排查，要把"说错过的结论"一起留档。**
    上面那五条我全留着——**删掉它们，下一个人会用同样的理由再错一遍。**
 
+---
+
+## 2026-10-08 · 改用 Docker 之后碰到的四个坑
+
+> 承接上一条：Kafka 最终改成**跑在 WSL2 的 Docker 容器**里（决策见
+> [ADR-0021](../02-decisions/ADR-0021-docker-in-wsl2.md)）。下面这四个都是换方案之后新踩的。
+
+### 坑 1：镜像拉不下来（Docker 官方仓库在国内直连不通）
+
+**现象**：`docker pull` 超时。
+
+```
+failed to resolve reference "docker.io/library/hello-world:latest":
+dial tcp [2a03:2880:f127:...]:443: i/o timeout
+```
+
+注意**地址里那个是 IPv6**——但真正的根因是**直连 Docker Hub 不通**（实测 `registry-1.docker.io` 返回 000）。
+
+**解决**：配国内镜像加速站。
+
+```bash
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{ "registry-mirrors": ["https://docker.m.daocloud.io"] }
+JSON
+```
+
+**⚠️ 配完必须重启 Docker，否则不生效**——这一条我漏了，白试了一轮：
+
+```bash
+systemctl restart docker
+docker info | grep -A2 "Registry Mirrors"    # 能看到那一行才算生效
+```
+
+**认证流程说明**（免得下次看到 401 就以为失败）：
+registry 的 401 是**正常的第一次响应**，客户端拿到它去换 token，再带着 token 重试。
+镜像站指向的认证服务是**它自己的**（`m.daocloud.io`），**不是** `auth.docker.io`——
+后者在国内同样不通，所以别按官方文档那条路走。
+
+**顺带关掉 IPv6**（本机 WSL2 里 IPv6 解析会让 Docker 卡住）：
+
+```bash
+sysctl -w net.ipv6.conf.all.disable_ipv6=1
+```
+
+### 坑 2：`sc.exe` 在 PowerShell 里不是你以为的那个命令
+
+**现象**：想启用一个服务，命令报错，而且错误信息完全对不上：
+
+```
+PS> sc config mpssvc start= auto
+Set-Content : 找不到接受实际参数"start="的位置形式参数。
+```
+
+**根因**：**PowerShell 里 `sc` 是 `Set-Content`（写文件）的别名**，它盖住了真正的 `sc.exe`。
+所以那条命令被当成了"往一个叫 `config` 的文件里写内容"。
+
+```powershell
+Get-Alias sc      # → Set-Content
+```
+
+**解决**：**写 `sc.exe`，带上 `.exe`**。
+
+```powershell
+sc.exe config mpssvc start= auto     # 注意 start= 后面必须有一个空格
+sc.exe start mpssvc
+```
+
+**另**：`sc` 的 `start=` 那个空格是它自己的怪规矩，`start =` 或 `start=` 都会报错。
+绕开的写法（PowerShell 原生）：
+
+```powershell
+Set-Service -Name <名字> -StartupType Automatic
+Start-Service <名字>
+```
+
+**这条的教训**：**报错信息说"找不到参数"时，先怀疑命令本身是不是你想要的那个。**
+别名是隐形的，`Get-Alias <名字>` 一行就能查。
+
+### 坑 3：WSL2 空闲约 1 分钟会自己关机 —— 这让 Kafka"时好时坏"
+
+**现象**：Kafka 容器起来、验证通过。**但不再敲 WSL 命令约 1~2 分钟后，Windows 侧
+`localhost:9092` 就连不上了。** 刚验证完是通的，过一会儿再试就不通——**看着像随机故障**。
+
+**我先误判了一次**：看容器状态反复显示 `Up 2 seconds`，以为是"容器在反复重启"。
+
+**把系统日志拉出来才看清真相**：
+
+```
+$ journalctl -u docker -n 25
+Oct 08 01:04:12  dockerd: Daemon shutdown complete
+-- Boot 6fb9ce0d01c3442e8adf2506abb31756 --        ← 整台虚拟机重启了
+Oct 08 01:12:37  systemd: Starting Docker Application Container Engine...
+```
+
+**是整台虚拟机重启，不是容器重启。**
+
+**根因**：WSL2 默认在最后一个会话结束后自动关机（本机实测约 1 分钟）。
+**Kafka 是常驻服务，不能被这样关掉。**
+
+**试过但没用的办法**：在 `C:\Users\w\.wslconfig` 里写 `vmIdleTimeout=86400000`（24 小时）。
+**本机 WSL 版本 3.0.1.0 不认这个设置**——写完重启，虚拟机照样关。
+（这一行仍留在 `.wslconfig` 里并加了注释说明它在本机无效，**免得后来者以为它生效了**。）
+
+**解决**：**让启动脚本前台挂住**——`scripts/start-kafka.bat` 启动容器后不退出，
+持有 WSL 会话，窗口开着服务就在。
+
+**实测对照**：
+
+| | 结果 |
+|---|---|
+| 修复前（安静观察 4 分钟） | **12 次探测全断** |
+| 修复后（安静观察 5 分钟） | **15 次探测全通，0 次断** |
+
+**代价**：那个窗口要一直开着。**这跟原生版 Kafka 的使用习惯一样**（也是开个窗口跑着，
+关了服务就停），所以不算变差；而且**状态可见**——窗口开着就是服务在跑，不用猜。
+
+**定位手法值得记**：**"看着像随机故障"的问题，先去看系统日志有没有 `-- Boot --` 这类重启标记**，
+它能把"程序不稳定"和"环境被关掉了"一刀切开。
+
+### 坑 4：Docker 端口只绑 `127.0.0.1` 时，Windows 侧连不进来
+
+**现象**：容器起来、健康检查 healthy、**容器内**能收发消息，
+但**Windows 侧**连 `localhost:9092` 报：
+
+```
+Timed out waiting for a node assignment. Call: listTopics
+```
+
+**这个错看着像 Kafka 配置问题**（比如 `advertised.listeners` 写错），**其实根本连不上**。
+
+**根因**：compose 里端口写成 `"127.0.0.1:9092:9092"` 时，WSL2 里的 docker-proxy
+**只监听回环地址**，而 **WSL2 的 localhost 转发不接管这类端口**。
+
+**解决**：**绑 `0.0.0.0`**（compose 里写成 `"9092:9092"` 即可）。
+
+**验证**：
+
+```bash
+# WSL2 里看监听地址：要出现 0.0.0.0:9092 或 [::]:9092，而不是 127.0.0.1:9092
+ss -lntp | grep 9092
+```
+
+**排查顺序**（下次照这个顺序，能省很多时间）：
+1. TCP 层通不通（`TcpClient` 连一下）——**先分清"连不上"和"连上了但协议不对"**
+2. 通的话再看监听地址是 `0.0.0.0` 还是 `127.0.0.1`
+3. 才轮到怀疑 Kafka 自己的配置
+
+> **这条与上一条合起来是一个教训**：Kafka 客户端的报错**信息量很低**——
+> "连不上"和"配置不对"经常给同一个错。**所以要先在更底层（TCP、端口绑定）把可能性切开。**
+

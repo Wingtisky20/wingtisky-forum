@@ -1,0 +1,70 @@
+# 本地中间件：Kafka（与 M5 起加入的 Elasticsearch）
+#
+# 为什么有这份文件（决策依据见 docs/02-decisions/ADR-0021-docker-in-wsl2.md）：
+#   1. Kafka 在 Windows 原生上不可用 —— 凡触发删日志段/删主题，broker 必崩
+#      （2026-10-07 实测 16 次）。换到 Linux 文件语义下，这个失败模式不复存在。
+#   2. Docker 装不进 Windows（本机是 Win10 家庭版），但可以装在 WSL2 里 ——
+#      所以这个文件要在 WSL2 内、用 WSL2 的 docker compose 执行。
+#   3. 这份文件同时兑现 ADR-0004 对使用者的承诺：本机若有 Docker，
+#      可自行用它把中间件跑起来，不必装原生版本。
+#
+# 怎么用（在 WSL2 里，不是 Windows 里）：
+#   docker compose -f /mnt/d/aaaDocuments/project/WingtiskyForum/deploy/docker-compose.yml up -d
+#   停止：  ... down
+#   连数据一起清空重来： ... down -v
+#
+# 日常不用记这些 —— 用 scripts/start-kafka.bat 即可，它转发到这里。
+
+name: wt-middleware
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: wt-kafka
+    restart: unless-stopped
+    ports:
+      # 只暴露客户端口。Windows 侧应用照旧连 localhost:9092，代码不用改。
+      #
+      # ⚠️ 必须绑 0.0.0.0，不能写 127.0.0.1。
+      #    实测（2026-10-08）：写 127.0.0.1 时，WSL2 里 docker-proxy 只监听回环地址，
+      #    而 WSL2 的 localhost 转发**不接管**这类端口 —— 结果 Windows 侧连不上，
+      #    报 `Timed out waiting for a node assignment`（这个错看着像配置问题，其实是没通）。
+      - "9092:9092"
+    environment:
+      # ---- KRaft 单节点：一个进程同时当 broker 和 controller（ADR-0001：不用 ZooKeeper）
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      CLUSTER_ID: wt-local-cluster-001
+
+      # ---- 监听：容器内全接口监听，对外宣告 localhost（客户端在 Windows 侧）
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # ---- 单节点的必然取舍：副本数只能是 1。
+      #      ⚠️ 这只对本地开发成立：生产至少 3 副本 + min.insync.replicas=2。
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # ---- 本地开发用不着这么多分区，默认 50 个会让 __consumer_offsets 目录很啰嗦
+      KAFKA_NUM_PARTITIONS: 3
+    volumes:
+      # 数据落在 Docker 卷里（物理位置在 WSL2 的 ext4 文件系统内，
+      # 也就是 D:\aaaSoftware\wsl\Ubuntu-22.04\ext4.vhdx）。
+      # ⚠️ 不要改成 /mnt/d/... 那样的 Windows 路径 —— 那是跨文件系统访问，
+      #    性能差，而且可能把 Windows 那套文件语义的坑请回来。
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  kafka-data:

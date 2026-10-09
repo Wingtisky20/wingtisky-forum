@@ -32,7 +32,7 @@ Java 后端秋招简历项目。仓库：https://github.com/Wingtisky20/wingtisk
 | 安全 | Spring Security 6（`SecurityFilterChain` Bean，**禁止** `WebSecurityConfigurerAdapter`） |
 | 数据库 | MySQL 8.0（沿用本机） |
 | 缓存 | Redis 5.0.14.1（沿用）· Redisson **3.52.0** · Caffeine **3.2.4** |
-| 消息 | Kafka **3.9.x KRaft**（**无 ZooKeeper**） |
+| 消息 | Kafka **3.9.x KRaft**（**无 ZooKeeper**）· 本地跑在 **WSL2 的 Docker 容器**里（ADR-0021） |
 | 检索 | Elasticsearch **8.x** + IK（用 Java API Client，**禁止** TransportClient） |
 | 服务治理 | Nacos · Spring Cloud Gateway（**M9 才引入**） |
 | 前端 | Vue3 + Vite + Element Plus |
@@ -41,7 +41,11 @@ Java 后端秋招简历项目。仓库：https://github.com/Wingtisky20/wingtisk
 
 ### 明确禁止（§1.5「不做的事」）
 
-❌ Docker · ❌ 微服务全家桶 · ❌ **Sentinel**（会替代掉自己实现的限流亮点）· ❌ **Seata**（用本地消息表 + 最终一致）· ❌ RocketMQ · ❌ 分库分表 · ❌ Kafka Streams/Flink · ❌ 任何未列入白名单的框架
+❌ ~~Docker~~ —— **2026-10-08 由 ADR-0021 修订**：**本地开发环境**可用 Docker，
+但**只用于承载 Kafka 与 ES**（跑在 WSL2 里的 Docker 引擎上，**不是 Docker Desktop**），
+compose 文件在 `deploy/docker-compose.yml`。**生产形态与 CI 形态不受影响**，
+MySQL 与 Redis 继续留在 Windows 原生。
+· ❌ 微服务全家桶 · ❌ **Sentinel**（会替代掉自己实现的限流亮点）· ❌ **Seata**（用本地消息表 + 最终一致）· ❌ RocketMQ · ❌ 分库分表 · ❌ Kafka Streams/Flink · ❌ 任何未列入白名单的框架
 
 **版本核查必须用 `maven-metadata.xml`**，不要用 solr 的 `core=gav&rows=N`（按发布时间排序，会返回过期版本）。
 
@@ -148,18 +152,25 @@ app/                                        唯一启动模块（M9 拆为 forum
 
 ## 环境事实
 
-- 16G 内存 · Ryzen 5 4500U（6 核）· **C 盘仅剩 ~32G，安装一律 D 盘**
+- 16G 内存 · Ryzen 5 4500U（6 核）· **C 盘仅剩 ~35G，安装一律 D 盘**
 - JDK 17.0.16 · Maven / Node 在 `D:\aaaSoftware`
-- 中间件在 `D:\aaaSoftware`：MySQL 8.0.41（已装 · 常驻）· Redis 5.0.14.1（已装 · **M3 起是启动期硬依赖**，不起它应用起不来）
-- ⚠️ **Kafka 与 ES 要从原生 Windows 迁进 WSL2**（2026-10-07 定，见 ADR-0020）。
-  **别再用原生那套**：原生 Windows 上 Kafka broker **凡要回收磁盘就自毁**（当天实测崩 16 次，
-  删日志段、删主题都会触发），相关官方工单至今 Open。**这条不是配置问题，绕不过去。**
-  旧的 `D:\aaaSoftware\kafka-3.9.1` **保留备查，不要删**。
-  - **WSL2 尚未安装**：装它要管理员权限，CLI 做不了 → 见 `docs/STATUS.md`「阻塞项」
-  - 装好之后：Kafka 与 ES 都在 WSL2 里跑，Windows 侧应用照旧连 `localhost:9092`
-  - 详细排查记录见 `docs/06-runbook/troubleshooting.md` 2026-10-07 条目
-- **无 Docker**（Win10 **Home**，无 Hyper-V 后端，装不了 Docker Desktop）· **无 WSL2** —— 集成测试连本地中间件，不在 CI 跑
-  （WSL2 装好后这条要改：中间件将跑在 WSL2 里）
+- **中间件分两处承载**（2026-10-08 定，见 ADR-0021）：
+  - **Windows 原生**：MySQL 8.0.41（常驻）· Redis 5.0.14.1（**M3 起是启动期硬依赖**，不起它应用起不来）——
+    **这两个没动过，也不打算动**
+  - **WSL2 的 Docker 容器**：Kafka 3.9.1（容器名 `wt-kafka`）· ES（M5 起）——
+    **因为 Kafka 在原生 Windows 上凡回收磁盘就自毁**（2026-10-07 实测崩 16 次），
+    官方工单至今 Open。**这不是配置问题，绕不过去。**
+  - Windows 侧应用**照旧连 `localhost:9092`**，业务代码不用改
+- **起 Kafka**：`scripts\start-kafka.bat`（⚠️ **窗口要一直开着**——WSL2 空闲约 1 分钟会自动关机，
+  容器跟着死。`vmIdleTimeout` 在本机 WSL 3.0.1 上无效，所以靠前台会话撑住）
+  **停 Kafka**：`scripts\stop-kafka.bat`（保留数据）
+- **WSL2 已装**（Ubuntu-22.04，虚拟磁盘在 `D:\aaaSoftware\wsl\Ubuntu-22.04\ext4.vhdx`，
+  所以 WSL2 里装的一切都落在 D 盘）· **内存上限 6 GB**（`.wslconfig`）
+- **无 Docker Desktop**（Win10 **Home**，无 Hyper-V 后端）——但 **Docker 引擎装在 WSL2 里**，
+  家庭版限制绕得过去 · 集成测试连本地中间件，不在 CI 跑
+- ⚠️ **两套历史 Kafka 安装都还在磁盘上，别删**：`D:\aaaSoftware\kafka-3.9.1`（原生，已废弃）
+  与 WSL2 里的 `/root/kafka`（手工装，已停用）。**它们是退路**——本次改动还没跑过完整里程碑，
+  等 M4 做完再清理。理由见 ADR-0021
 - **git 访问 GitHub 必须走代理**：本机 Clash Verge 混合端口 `127.0.0.1:18569`，已通过 `git config --local` 配置（**Clash 未运行时 git push 会失败，不是仓库坏了**）。详见 `docs/06-runbook/troubleshooting.md`
 - 仓库地址：https://github.com/Wingtisky20/wingtisky-forum（Public）
 
