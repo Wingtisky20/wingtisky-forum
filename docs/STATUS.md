@@ -1,7 +1,7 @@
 # 项目状态
 
 > **唯一状态源。** 进度只写在这里，别处只引用不复制。
-> **最后更新**：2026-10-07
+> **最后更新**：2026-10-08
 
 ---
 
@@ -142,8 +142,21 @@ spec §6.2 要求"真实 HTTP 走通"。**闸门已达成**——应用真起来
   归属校验 Bean、测试写法——M2 / M3 都沿用了这套模式，M4 照同一套来）
 - `docs/05-interview/` —— **13 份链路讲解**。**接手时先读这里**：
   它比设计稿更贴近代码，能在动手前把现有链路摸清
-- `docs/06-runbook/local-setup.md` —— 环境怎么起（**M3 起 Redis 是启动期硬依赖**，
-  见下方"中间件当前状态"）
+- `docs/06-runbook/local-setup.md` —— 环境怎么起（**M3 起 Redis 是启动期硬依赖**；
+  **§7.3 有起 Kafka 的三条必知事项**，尤其"窗口要一直开着"）
+- ⚠️ **`docs/02-decisions/ADR-0021-docker-in-wsl2.md`** —— **M4 开工前必读**。
+  Kafka 为什么跑在 WSL2 的 Docker 里、为什么 MySQL/Redis 不动、
+  **M9 会超内存预算**这条待办，都在这里
+- `deploy/docker-compose.yml` —— **Kafka 的真实配置在这**（不在 `D:\aaaSoftware` 了）。
+  改 Kafka 参数改这个文件，`docs/06-runbook/troubleshooting.md` 有 2026-10-08 那组坑
+
+> **接手 M4 前，先确认环境是活的**（Kafka 是 M4 的核心，它停了什么都做不了）：
+>
+> ```bash
+> netstat -ano | grep ":9092"        # 有 LISTENING 就是在跑
+> ```
+>
+> 没在跑就 `scripts\start-kafka.bat`（**然后那个窗口别关**）。
 
 > 上一份执行记录：[`docs/04-log/04-M3-多级缓存.md`](docs/04-log/04-M3-多级缓存.md)（**M3 已完结**，含可原样复现的验证命令）
 > 更早：M2 见 `03-M2-内容域核心与前端.md`；M1 见 `02-M1-用户域与安全基座.md`；M0 见 `01-M0-项目启动与协作基建.md`
